@@ -45,12 +45,12 @@ local function walkTo(x, y)
     return ok or (bot.x == x and bot.y == y)
 end
 
-local function interactTile(x, y)
-    if type(bot.active) == "function" then
-        bot:active(x, y)
+local function enterPortal(x, y)
+    if type(bot.enter) == "function" then
+        bot:enter()
     end
     bot:hit(x, y)
-    sleep(300)
+    sleep(400)
 end
 
 -- Hook dialog request untuk auto-submit packet adventure door
@@ -93,7 +93,7 @@ local function run()
 
     print("[Step 1] Berjalan ke portal (22, 16)...")
     walkTo(22, 16)
-    interactTile(22, 16)
+    enterPortal(22, 16)
     sleep(1500)
 
     print("[Step 2] Mengambil adventure key di (61, 12)...")
@@ -103,14 +103,17 @@ local function run()
 
     print("[Step 2] Berjalan ke portal (64, 12)...")
     walkTo(64, 12)
-    interactTile(64, 12)
+    enterPortal(64, 12)
     sleep(1500)
 
     print("[Step 3] Berjalan ke adventure door (50, 15)...")
     walkTo(50, 15)
 
-    -- Trigger dialog adventure door
-    interactTile(50, 15)
+    -- Masuk adventure door via bot:enter() + kirim dialog packet pilihan button0
+    if type(bot.enter) == "function" then
+        bot:enter()
+    end
+    bot:hit(50, 15)
     sleep(500)
     sendAdventureDoorPacket(50, 15, "button0")
     sleep(1000)
