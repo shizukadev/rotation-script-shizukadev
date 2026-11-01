@@ -45,6 +45,68 @@ local function farmDoor(farm)
     return type(farm) == "table" and (farm.door or farm.worldDoor or "") or ""
 end
 
+local function farmBlockId(farm)
+    local id = type(farm) == "table" and (farm.id or farm.blockId or farm.block_id) or nil
+    return tonumber(id) or CONFIG.BLOCK_ID
+end
+
+local function loadFarmsFromFile(filePath)
+    local content = nil
+    if type(read) == "function" then
+        local ok, data = pcall(read, filePath)
+        if ok and data and data ~= "" then content = data end
+    end
+    if not content and io and io.open then
+        local f = io.open(filePath, "r")
+        if f then
+            content = f:read("*a")
+            f:close()
+        end
+    end
+    if not content or content == "" then return nil end
+
+    local list = {}
+    for line in (content .. "\n"):gmatch("([^\n]+)") do
+        line = line:match("^%s*(.-)%s*$")
+        if line ~= "" and not line:match("^#") and not line:match("^//") then
+            -- Format: WORLD:DOOR:BLOCK_ID atau WORLD:DOOR atau WORLD
+            local w, d, id = line:match("^([^:]+):([^:]+):(%d+)$")
+            if not w then
+                w, d = line:match("^([^:]+):([^:]+)$")
+            end
+            if not w then
+                w = line:match("^([^:]+)$")
+            end
+            if w and w ~= "" then
+                table.insert(list, { world = w, door = d or "", id = tonumber(id) })
+            end
+        end
+    end
+    return #list > 0 and list or nil
+end
+
+local function resolveFarmList()
+    local path = CONFIG.FARM_FILE
+    if (not path or path == "") and CONFIG.FARM_FROM_FILE then
+        local username = (os and os.getenv and (os.getenv("USERNAME") or os.getenv("USER")))
+            or (type(getUsername) == "function" and getUsername())
+            or "Administrator"
+        path = string.format("C:\\Users\\%s\\Downloads\
+otation.txt", username)
+    end
+
+    if path and path ~= "" then
+        local fromFile = loadFarmsFromFile(path)
+        if fromFile then
+            print(string.format("[Setup] Berhasil memuat %d farm dari file: %s", #fromFile, path))
+            return fromFile
+        else
+            print(string.format("[Setup] Peringatan: Gagal membaca file farm '%s'. Memakai CONFIG.FARMS fallback.", path))
+        end
+    end
+    return CONFIG.FARMS or {}
+end
+
 -- ========================================================
 -- DISCORD WEBHOOK MONITORING (EDIT PESAN REALTIME)
 -- Tidak ada padanan bawaan Lucifer, jadi tetap di sini.
@@ -181,16 +243,18 @@ local function registerWorlds()
     end
 
     local registered = 0
-    for _, farm in ipairs(CONFIG.FARMS or {}) do
+    local farmList = resolveFarmList()
+    for _, farm in ipairs(farmList) do
         local world = farmWorldName(farm)
         if world ~= "" then
             local door = farmDoor(farm)
             local nameAndDoor = door ~= "" and (world .. ":" .. door) or world
+            local itemToFarm = farmBlockId(farm)
             local farmOk = pcall(function()
                 if type(manager.removeFarm) == "function" then
                     manager:removeFarm(world)
                 end
-                manager:addFarm(nameAndDoor, CONFIG.BLOCK_ID)
+                manager:addFarm(nameAndDoor, itemToFarm)
             end)
             if farmOk then
                 registered = registered + 1

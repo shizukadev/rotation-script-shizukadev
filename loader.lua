@@ -7,8 +7,13 @@
 -- 1. KONFIGURASI ROTASI & FITUR (Sesuaikan di sini)
 -- ========================================================
 local CONFIG = {
-    -- Daftar world farm. Didaftarkan otomatis ke WorldManager Lucifer saat engine start.
-    -- Format: { world = "NAMA_WORLD", door = "DOOR_ID" } atau string "NAMA_WORLD"
+    -- Sumber daftar farm:
+    -- Jika FARM_FROM_FILE = true, script otomatis membaca file rotation.txt di folder Downloads user
+    -- (format per baris: WORLD:DOOR:ID atau WORLD:DOOR atau WORLD)
+    FARM_FROM_FILE = true,
+    FARM_FILE = "", -- Kosongkan agar auto-detect folder Downloads user, atau isi path lengkap rotation.txt
+
+    -- Daftar world farm fallback (dipakai jika file tidak ditemukan / FARM_FROM_FILE = false)
     FARMS = {
         { world = "FARM1", door = "" },
         { world = "FARM2", door = "" },
