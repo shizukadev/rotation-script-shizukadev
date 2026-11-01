@@ -13,6 +13,22 @@ end
 
 local TARGET_WORLD = "4AID"
 
+-- Malady target pengobatan di 4AID:
+-- ID 1: Torn Punching Muscle
+-- ID 2: Gem Cuts
+-- Malady lain (misal Grumbleteeth / Chicken Feet) dikecualikan.
+local CURE_TARGET_IDS = { [1] = true, [2] = true }
+
+local function checkNeedsHospital()
+    local mid = tonumber(bot.malady)
+    if not mid or mid == 0 then
+        if type(bot.getMaladyDuration) == "function" and bot:getMaladyDuration() > 0 then
+            mid = tonumber(bot.malady) or 0
+        end
+    end
+    return (mid and CURE_TARGET_IDS[mid] == true), mid
+end
+
 local function waitOnline()
     while bot.status ~= BotStatus.online do
         sleep(1000)
@@ -83,6 +99,14 @@ local function registerDialogHook()
 end
 
 local function run()
+    local needsCure, mid = checkNeedsHospital()
+    if not needsCure then
+        local desc = (mid and mid ~= 0) and ("Malady ID " .. mid .. " bukan target") or "Bot bebas penyakit"
+        print("[Check] Tidak perlu ke 4AID: " .. desc)
+        return false
+    end
+
+    print(string.format("[Check] Terdeteksi penyakit ID %d (Torn Muscle / Gem Cuts). Memulai pengobatan ke 4AID...", mid))
     registerDialogHook()
 
     print("[Step 1] Menuju world " .. TARGET_WORLD .. "...")
