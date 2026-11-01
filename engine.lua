@@ -91,8 +91,7 @@ local function resolveFarmList()
         local username = (os and os.getenv and (os.getenv("USERNAME") or os.getenv("USER")))
             or (type(getUsername) == "function" and getUsername())
             or "Administrator"
-        path = string.format("C:\\Users\\%s\\Downloads\
-otation.txt", username)
+        path = string.format("C:\\Users\\%s\\Downloads\\rotation.txt", username)
     end
 
     if path and path ~= "" then
@@ -323,7 +322,12 @@ local function applyRotationSettings()
         rotation.pnb_in_home = true
         if CONFIG.PNB.WORLD and CONFIG.PNB.WORLD ~= "" then
             rotation.pnb_world = CONFIG.PNB.WORLD
+        else
+            rotation.pnb_world = nil
         end
+    else
+        rotation.pnb_in_home = false
+        rotation.pnb_world = nil
     end
 
     -- Ambang drop seed ke storage (rotasi yang menjatuhkan, bukan script ini)
@@ -361,12 +365,70 @@ bot.rotation.enabled = true
 print("[Engine] Rotasi bawaan Lucifer AKTIF. Panen/tanam/PNB/drop seed/beli pack dijalankan oleh Lucifer.")
 updateWebhook("Rotasi Bawaan Lucifer Aktif", "-")
 
+-- ========================================================
+-- AUTO MALADY 4AID DISPATCHER (TORN MUSCLE / GEM CUTS)
+-- ========================================================
+local hospitalMod = nil
+local function getHospitalModule()
+    if hospitalMod == nil then
+        local ok, mod = pcall(require, "auto_malady_4aid")
+        if ok and type(mod) == "table" and type(mod.runCure) == "function" then
+            hospitalMod = mod
+        else
+            -- Fallback jika file berada di path relatif yang sama
+            local f = io.open("auto_malady_4aid.lua", "r") or io.open("lucifer-rotation-main/auto_malady_4aid.lua", "r")
+            if f then
+                local code = f:read("*a")
+                f:close()
+                local chunk = (loadstring or load)(code, "@auto_malady_4aid.lua")
+                if chunk then
+                    local res = chunk("module")
+                    if type(res) == "table" and type(res.runCure) == "function" then
+                        hospitalMod = res
+                    end
+                end
+            end
+        end
+    end
+    return hospitalMod
+end
+
+local function checkAndDispatchHospital()
+    local mod = getHospitalModule()
+    if not mod or type(mod.checkNeedsHospital) ~= "function" then return false end
+
+    local needsCure, mid = mod.checkNeedsHospital(bot)
+    if not needsCure then return false end
+
+    print(string.format("[Engine] Terdeteksi Malady ID %d butuh pengobatan! Menjeda rotasi bawaan...", mid))
+    updateWebhook(string.format("Pengobatan Malady ID %d di 4AID", mid), "4AID")
+
+    -- Jeda rotasi bawaan agar tidak berebut kontrol
+    local wasRotationEnabled = bot.rotation and bot.rotation.enabled == true
+    if bot.rotation then
+        bot.rotation.enabled = false
+    end
+
+    local success = mod.runCure(bot)
+
+    -- Resume rotasi bawaan
+    if wasRotationEnabled and bot.rotation then
+        bot.rotation.enabled = true
+        print("[Engine] Pengobatan selesai/dilewati. Rotasi bawaan dilanjutkan.")
+    end
+
+    return success
+end
+
 local farmLabel = #(CONFIG.FARMS or {}) > 0 and farmWorldName(CONFIG.FARMS[1]) or "-"
 
 while waitOnline() do
     sleep(2000)
 
-    -- Lucifer mematikan rotasi saat disconnect / stop manual: nyalakan lagi kalau bot sudah online
+    -- Cek malady target secara berkala (setiap siklus watchdog)
+    pcall(checkAndDispatchHospital)
+
+    -- Lucifer mematikan rotasi saat disconnect: nyalakan lagi kalau bot online dan rotasi seharusnya jalan
     if bot.rotation and bot.rotation.enabled ~= true then
         bot.rotation.enabled = true
         print("[Engine] Rotasi bawaan mati (DC/stop). Dinyalakan kembali.")
