@@ -507,23 +507,6 @@ local function applyRotationSettings()
     setRotationField(rotation, "visit_random_worlds", false)
     setRotationField(rotation, "custom_position", 0) -- pakai tile default, bukan custom break tile
 
-    -- Resep aktivasi yang didokumentasikan: rotasi butuh item target (id) dan
-    -- batas world sebelum bisa dinyalakan. Tanpa `id`, toggle enabled tidak
-    -- menghasilkan rotasi yang berjalan.
-    local blockId = tonumber(CONFIG.BLOCK_ID) or tonumber(CONFIG.SEED_ID)
-    if blockId then
-        setRotationField(rotation, "id", blockId)
-    else
-        print("[Setup] Peringatan: CONFIG.BLOCK_ID kosong; rotasi butuh ID item target.")
-    end
-    setRotationField(rotation, "world_limit", #(resolveFarmList() or {}))
-    if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.PricePack then
-        setRotationField(rotation, "gem_limit", CONFIG.AUTO_BUY_PACK.PricePack)
-    end
-    if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.PACK_INDEX then
-        setRotationField(rotation, "pack", CONFIG.AUTO_BUY_PACK.PACK_INDEX)
-    end
-
     -- v2.86: interval adalah API bot:setInterval(Action.*), bukan field
     -- rotation.harvest_interval/plant_interval/break_interval. Field lama
     -- ditolak build host dan dulu ikut menggagalkan seluruh setup.
@@ -582,6 +565,26 @@ end
 -- ========================================================
 -- EKSEKUSI
 -- ========================================================
+-- Diagnostik satu kali: cetak apa yang sebenarnya ada di build host.
+-- Build ini bukan Lucifer stock (punya runInbuiltRotation / getInbuiltRotationStatus),
+-- jadi tebakan nama field tidak berguna. Satu baris log ini menjawab semuanya.
+local function dumpRotationDiagnostics()
+    pcall(function()
+        local r = bot.rotation
+        print("[Diag] type(bot.rotation) = " .. type(r))
+        local keys = {}
+        if type(r) == "table" then
+            for k in pairs(r) do keys[#keys + 1] = tostring(k) end
+            table.sort(keys)
+            print("[Diag] field rotation = " .. (#keys > 0 and table.concat(keys, ",") or "(kosong)"))
+        end
+        for _, name in ipairs({ "runInbuiltRotation", "getInbuiltRotationStatus", "setupInbuiltFarmList",
+                                "disableBotRotation", "stopSuppliedRotation", "applyRotationSettings" }) do
+            print("[Diag] global " .. name .. " = " .. type(rawget(_G, name)))
+        end
+        print(string.format("[Diag] enabled=%s status=%s", tostring(r and r.enabled), tostring(r and r.status)))
+    end)
+end
 print("[Engine] Memulai driver rotasi Lucifer v2.86...")
 updateWebhook("Engine Dimulai", "-")
 
@@ -609,12 +612,7 @@ if okStartup and not lockoutTriggered then
     end
     if bot.rotation and bot.rotation.enabled ~= true then
         print("[Engine] Rotasi belum aktif (bot mungkin belum login). Watchdog akan menyalakannya setelah online.")
-        -- Diagnostik: nilai apa adanya dari host, supaya tidak perlu menebak lagi.
-        pcall(function()
-            print(string.format("[Engine] Status rotasi: enabled=%s status=%s id=%s world_limit=%s",
-                tostring(bot.rotation.enabled), tostring(bot.rotation.status),
-                tostring(bot.rotation.id), tostring(bot.rotation.world_limit)))
-        end)
+        dumpRotationDiagnostics()
     end
 else
     if bot.rotation then setRotationEnabled(false) end
@@ -817,11 +815,8 @@ while true do
                     print("[Engine] Rotasi terkonfirmasi AKTIF setelah bot online.")
                 elseif not rotationDiagPrinted then
                     rotationDiagPrinted = true
-                    pcall(function()
-                        print(string.format("[Engine] Rotasi tetap OFF walau sudah dinyalakan: enabled=%s status=%s id=%s world_limit=%s",
-                            tostring(bot.rotation.enabled), tostring(bot.rotation.status),
-                            tostring(bot.rotation.id), tostring(bot.rotation.world_limit)))
-                    end)
+                    print("[Engine] Rotasi tetap OFF walau sudah dinyalakan.")
+                    dumpRotationDiagnostics()
                 end
             end
 
