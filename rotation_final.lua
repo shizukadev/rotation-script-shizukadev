@@ -94,6 +94,8 @@ end
 bot.leave_world_before_warp = false
 
 local rotationEnableError = nil
+-- True hanya setelah host benar-benar melaporkan rotation.enabled == true.
+local rotationConfirmedOn = false
 local function setRotationEnabled(on)
     if not bot.rotation then return false end
     local ok, err = pcall(function() bot.rotation.enabled = on end)
@@ -608,9 +610,13 @@ local rotationSetupOK = startupStage("pengaturan rotasi", applyRotationSettings)
 local okStartup = botSetupOK and worldsSetupOK and rotationSetupOK
 if okStartup and not lockoutTriggered then
     if setRotationEnabled(true) then
+        rotationConfirmedOn = (bot.rotation and bot.rotation.enabled == true)
         print("[Rotation Final] Rotasi bawaan Lucifer AKTIF. Panen/tanam/PNB/drop seed/beli pack dijalankan oleh Lucifer.")
     elseif rotationEnableError then
         print("[Rotation Final] Rotasi GAGAL dinyalakan oleh host. Supervisor penyakit tetap berjalan; nyalakan toggle manual di UI Lucifer.")
+    end
+    if bot.rotation and bot.rotation.enabled ~= true then
+        print("[Rotation Final] Rotasi belum aktif (bot mungkin belum login). Watchdog akan menyalakannya setelah online.")
     end
 else
     if bot.rotation then setRotationEnabled(false) end
@@ -720,8 +726,9 @@ local function checkAndDispatchHospital()
     end
 
     lastHospitalAttempt = now
+    -- Niat farming, bukan bacaan toggle: rotasi bisa belum pernah menyala.
     if not hospitalPending then
-        shouldResumeAfterCure = (bot.rotation and bot.rotation.enabled == true)
+        shouldResumeAfterCure = farmRunIntent and not intentionalStop
     end
     hospitalPending = true
 
@@ -743,7 +750,9 @@ local function checkAndDispatchHospital()
         beginSpamRecovery()
         hospitalPending = false
         if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
-            setRotationEnabled(true)
+            if setRotationEnabled(true) then
+                rotationConfirmedOn = (bot.rotation.enabled == true)
+            end
             print("[Rotation Final] Pengobatan selesai (sembuh total). Rotasi bawaan dilanjutkan.")
             if type(sendWebhookNotification) == "function" then
                 sendWebhookNotification(string.format("✅ **[Malady Cured]** Penyakit pada bot **%s** berhasil disembuhkan di 4AID! Rotasi bawaan dilanjutkan.", tostring(bot.name)))
@@ -779,9 +788,17 @@ while true do
             local hadDisconnect = observedOfflineDuringWait or not wasOnline
             observedOfflineDuringWait = false
 
-            if not lockoutTriggered and not hospitalPending and not hadDisconnect and wasOnline and farmRunIntent and bot.rotation and bot.rotation.enabled == false and not intentionalStop then
+            if not lockoutTriggered and not hospitalPending and not hadDisconnect and wasOnline and farmRunIntent and rotationConfirmedOn and bot.rotation and bot.rotation.enabled == false and not intentionalStop then
                 intentionalStop = true
                 print("[Rotation Final] Rotasi dimatikan secara manual oleh user. Watchdog menghormati perintah stop.")
+            end
+
+            -- Script dijalankan sebelum login: coba nyalakan lagi sampai terkonfirmasi.
+            if not lockoutTriggered and not intentionalStop and not hospitalPending and farmRunIntent and not rotationConfirmedOn and bot.rotation then
+                if setRotationEnabled(true) and bot.rotation.enabled == true then
+                    rotationConfirmedOn = true
+                    print("[Rotation Final] Rotasi terkonfirmasi AKTIF setelah bot online.")
+                end
             end
 
             -- Hospital maintenance remains available while farming is stopped.
@@ -802,7 +819,9 @@ while true do
                     if lockoutTriggered then
                         if bot.rotation then setRotationEnabled(false) end
                     elseif not intentionalStop and not hospitalPending and hadDisconnect and bot.rotation and bot.rotation.enabled ~= true then
-                        setRotationEnabled(true)
+                        if setRotationEnabled(true) then
+                            rotationConfirmedOn = (bot.rotation.enabled == true)
+                        end
                         print("[Rotation Final] Bot pulih dari disconnect. Rotasi bawaan dinyalakan kembali.")
                     end
                 end

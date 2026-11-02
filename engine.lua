@@ -26,6 +26,11 @@ bot.leave_world_before_warp = false -- Langsung warp antar-world tanpa exit terl
 -- dulu error itu membunuh script tepat setelah setup, sehingga toggle tidak
 -- pernah menyala. Sekarang dilaporkan dan tidak mematikan supervisor.
 local rotationEnableError = nil
+-- True hanya setelah host benar-benar melaporkan rotation.enabled == true.
+-- Script yang dijalankan sebelum bot login sering gagal menyalakan rotasi;
+-- dulu bacaan `enabled == false` berikutnya disalahartikan sebagai stop manual
+-- dan rotasi tidak pernah dinyalakan lagi.
+local rotationConfirmedOn = false
 local function setRotationEnabled(on)
     if not bot.rotation then return false end
     local ok, err = pcall(function() bot.rotation.enabled = on end)
@@ -583,12 +588,13 @@ local rotationSetupOK = startupStage("pengaturan rotasi", applyRotationSettings)
 local okStartup = botSetupOK and worldsSetupOK and rotationSetupOK
 if okStartup and not lockoutTriggered then
     if setRotationEnabled(true) then
+        rotationConfirmedOn = (bot.rotation and bot.rotation.enabled == true)
         print("[Engine] Rotasi bawaan Lucifer AKTIF. Panen/tanam/PNB/drop seed/beli pack dijalankan oleh Lucifer.")
     elseif rotationEnableError then
         print("[Engine] Rotasi GAGAL dinyalakan oleh host. Supervisor penyakit tetap berjalan; nyalakan toggle rotasi manual di UI Lucifer.")
     end
     if bot.rotation and bot.rotation.enabled ~= true then
-        print("[Engine] Peringatan: status rotasi terbaca OFF setelah dinyalakan. Periksa pilihan farm/storage di UI Lucifer.")
+        print("[Engine] Rotasi belum aktif (bot mungkin belum login). Watchdog akan menyalakannya setelah online.")
     end
 else
     if bot.rotation then setRotationEnabled(false) end
@@ -704,9 +710,12 @@ local function checkAndDispatchHospital()
     end
 
     lastHospitalAttempt = now
-    -- Simpan intent resume saat pertama kali memasuki siklus pengobatan
+    -- Simpan intent resume saat pertama kali memasuki siklus pengobatan.
+    -- Memakai niat farming, bukan bacaan toggle saat itu: kalau rotasi belum
+    -- pernah berhasil menyala (mis. script dijalankan sebelum login), bacaan
+    -- `enabled == false` membuat bot tidak pernah kembali farming setelah sembuh.
     if not hospitalPending then
-        shouldResumeAfterCure = (bot.rotation and bot.rotation.enabled == true)
+        shouldResumeAfterCure = farmRunIntent and not intentionalStop
     end
     hospitalPending = true
 
@@ -729,7 +738,9 @@ local function checkAndDispatchHospital()
         beginSpamRecovery()
         hospitalPending = false
         if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
-            setRotationEnabled(true)
+            if setRotationEnabled(true) then
+                rotationConfirmedOn = (bot.rotation.enabled == true)
+            end
             print("[Engine] Pengobatan selesai (sembuh total). Rotasi bawaan dilanjutkan.")
             if type(sendWebhookNotification) == "function" then
                 sendWebhookNotification(string.format("✅ **[Malady Cured]** Penyakit pada bot **%s** berhasil disembuhkan di 4AID! Rotasi bawaan dilanjutkan.", tostring(bot.name)))
@@ -767,11 +778,24 @@ while true do
             local hadDisconnect = observedOfflineDuringWait or not wasOnline
             observedOfflineDuringWait = false
 
-            -- Deteksi stop manual: HANYA jika bot terus-menerus online (tanpa ada fase disconnect)
-            -- dan BUKAN karena rotasi sedang dijeda internal oleh modul pengobatan (hospitalPending)
-            if not lockoutTriggered and not hospitalPending and not hadDisconnect and wasOnline and farmRunIntent and bot.rotation and bot.rotation.enabled == false and not intentionalStop then
+            -- Deteksi stop manual: HANYA jika rotasi pernah benar-benar menyala,
+            -- bot terus-menerus online (tanpa fase disconnect), dan BUKAN karena
+            -- rotasi sedang dijeda internal oleh modul pengobatan (hospitalPending).
+            if not lockoutTriggered and not hospitalPending and not hadDisconnect and wasOnline
+                and farmRunIntent and rotationConfirmedOn and bot.rotation
+                and bot.rotation.enabled == false and not intentionalStop then
                 intentionalStop = true
                 print("[Engine] Rotasi dimatikan secara manual oleh user. Watchdog menghormati perintah stop.")
+            end
+
+            -- Script dijalankan sebelum login: coba nyalakan lagi sampai host
+            -- benar-benar melaporkan enabled == true.
+            if not lockoutTriggered and not intentionalStop and not hospitalPending
+                and farmRunIntent and not rotationConfirmedOn and bot.rotation then
+                if setRotationEnabled(true) and bot.rotation.enabled == true then
+                    rotationConfirmedOn = true
+                    print("[Engine] Rotasi terkonfirmasi AKTIF setelah bot online.")
+                end
             end
 
             -- Hospital is maintenance, independent of farm run intent.
@@ -798,7 +822,9 @@ while true do
                         if bot.rotation then setRotationEnabled(false) end
                     elseif not intentionalStop and not hospitalPending and hadDisconnect and bot.rotation and bot.rotation.enabled ~= true then
                         -- Bot reconnect dari DC (bukan dari proses pengobatan yang masih sakit)
-                        setRotationEnabled(true)
+                        if setRotationEnabled(true) then
+                            rotationConfirmedOn = (bot.rotation.enabled == true)
+                        end
                         print("[Engine] Bot pulih dari disconnect. Rotasi bawaan dinyalakan kembali.")
                     end
                 end
