@@ -24,6 +24,7 @@ local CONFIG = {
         world = "MYSTORE",
         doorseed = "DOORSEED",
         doorpack = "DOORPACK",
+        -- packworld = "MYPACKSTORE",  -- opsional: world khusus hasil pack
         -- door = "",  -- Fallback jika doorseed/doorpack tidak diisi
     },
 
@@ -103,6 +104,8 @@ local CONFIG = {
         ENABLED = true,
         URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA",
         MESSAGE_ID = "", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
+        UPDATE_INTERVAL_SECONDS = 15, -- jeda refresh dashboard
+        PHASE_NOTIFY = false, -- true = kirim pesan tiap fase rotasi berubah (bisa ramai)
     },
 
     -- Beli pack otomatis: rotasi Lucifer beli PackName saat gems mencapai PricePack,

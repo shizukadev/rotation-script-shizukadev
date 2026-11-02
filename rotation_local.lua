@@ -25,6 +25,7 @@ local CONFIG = {
         world = "MYSTORE",
         doorseed = "DOORSEED",
         doorpack = "DOORPACK",
+        -- packworld = "MYPACKSTORE",  -- opsional: world khusus hasil pack
         -- door = "",  -- Fallback jika doorseed/doorpack tidak diisi
     },
 
@@ -104,6 +105,8 @@ local CONFIG = {
         ENABLED = true,
         URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA",
         MESSAGE_ID = "", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
+        UPDATE_INTERVAL_SECONDS = 15, -- jeda refresh dashboard
+        PHASE_NOTIFY = false, -- true = kirim pesan tiap fase rotasi berubah (bisa ramai)
     },
 
     -- Beli pack otomatis: rotasi Lucifer beli PackName saat gems mencapai PricePack,
@@ -466,6 +469,7 @@ function M.new(bot, config, api)
     local alert = config.OFFLINE_ALERT or {}
     local offlineSince, offlineSent, lastMalady, lastDashboard = nil, false, nil, nil
     local dashLogged = false
+    local lastPhase = nil
     local messageId = cfg.MESSAGE_ID
     local function now() return api.os.time() end
     local function enabled()
@@ -572,8 +576,22 @@ function M.new(bot, config, api)
             end
         end
         local interval = tonumber(cfg.UPDATE_INTERVAL_SECONDS) or 15
+        -- Perubahan fase rotasi langsung tercermin: paksa dashboard refresh,
+        -- jangan tunggu interval. Tidak kirim pesan baru supaya tidak spam
+        -- (farming_block <-> planting_seeds berganti tiap beberapa detik).
+        local phaseNow = rotationState()
+        if phaseNow ~= lastPhase then
+            if lastPhase ~= nil then
+                lastDashboard = nil
+                if cfg.PHASE_NOTIFY == true then
+                    deliver(string.format("Bot **%s**: fase rotasi **%s** → **%s** (%s).",
+                        tostring(bot.name), tostring(lastPhase), tostring(phaseNow), currentWorld()), false)
+                end
+            end
+            lastPhase = phaseNow
+        end
         if not lastDashboard or t-lastDashboard >= math.max(3, interval) then
-            local rotText = rotationState()
+            local rotText = phaseNow
 
             local body = string.format("**Bot:** %s\n**Status:** %s\n**World saat ini:** %s\n**Rotasi:** %s\n**Aktivitas:** %s\n**Gems:** %s", tostring(bot.name), online and "ONLINE" or "OFFLINE", currentWorld(), rotText, tostring(action or "-"), tostring(bot.gem_count or 0))
             local dashOk = deliver(body, true)
@@ -1082,11 +1100,15 @@ local function registerWorlds()
         end)
 
         if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.ENABLED then
+            -- Pack boleh punya world sendiri (STORAGE.packworld), terpisah dari
+            -- world seed. Fallback ke STORAGE.world seperti sebelumnya.
+            local packWorld = storage.packworld
+            if type(packWorld) ~= "string" or packWorld == "" then packWorld = storage.world end
             local packDoor = storage.doorpack or storage.door or ""
-            local packName = packDoor ~= "" and (storage.world .. ":" .. packDoor) or storage.world
+            local packName = packDoor ~= "" and (packWorld .. ":" .. packDoor) or packWorld
             pcall(function()
                 if type(manager.removeStorage) == "function" then
-                    manager:removeStorage(storage.world, StorageType.pack)
+                    manager:removeStorage(packWorld, StorageType.pack)
                 end
                 manager:addStorage(packName, StorageType.pack, 0)
             end)

@@ -505,11 +505,13 @@ local function registerWorlds()
         end)
 
         if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.ENABLED then
+            local packWorld = storage.packworld
+            if type(packWorld) ~= "string" or packWorld == "" then packWorld = storage.world end
             local packDoor = storage.doorpack or storage.door or ""
-            local packName = packDoor ~= "" and (storage.world .. ":" .. packDoor) or storage.world
+            local packName = packDoor ~= "" and (packWorld .. ":" .. packDoor) or packWorld
             pcall(function()
                 if type(manager.removeStorage) == "function" then
-                    manager:removeStorage(storage.world, StorageType.pack)
+                    manager:removeStorage(packWorld, StorageType.pack)
                 end
                 manager:addStorage(packName, StorageType.pack, 0)
             end)
