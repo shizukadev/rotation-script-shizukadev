@@ -634,7 +634,8 @@ while true do
                 print("[Rotation Final] Rotasi dimatikan secara manual oleh user. Watchdog menghormati perintah stop.")
             end
 
-            if not intentionalStop and not lockoutTriggered then
+            -- Hospital maintenance remains available while farming is stopped.
+            if not lockoutTriggered then
                 local curedOk = false
                 local okDisp, resDisp = pcall(checkAndDispatchHospital)
                 if not okDisp then

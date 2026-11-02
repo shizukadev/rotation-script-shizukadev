@@ -603,7 +603,9 @@ while true do
                 print("[Engine] Rotasi dimatikan secara manual oleh user. Watchdog menghormati perintah stop.")
             end
 
-            if not intentionalStop and not lockoutTriggered then
+            -- Hospital is maintenance, independent of farm run intent.
+            -- intentionalStop still prevents every farm resume path.
+            if not lockoutTriggered then
                 -- Cek malady target secara berkala (setiap siklus watchdog)
                 local curedOk = false
                 local okDisp, resDisp = pcall(checkAndDispatchHospital)
