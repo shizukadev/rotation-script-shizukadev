@@ -26,11 +26,30 @@ function M.getMaladyName(id)
     return MALADY_NAMES[tonumber(id)] or ("Unknown Malady (" .. tostring(id) .. ")")
 end
 
+-- Satu-satunya tempat yang mengubah bot.malady menjadi ID.
+-- Host bisa melaporkan angka ("1") atau nama ("Torn Punching Muscle");
+-- kalau kedua fungsi menebak sendiri-sendiri, hasilnya berbeda dan bot
+-- diam saja saat sakit. Semua pemanggil wajib lewat sini.
+function M.resolveMaladyId(botCtx)
+    local b = botCtx or (type(getBot) == "function" and getBot())
+    if not b then return nil end
+    local raw = b.malady
+    local id = tonumber(raw)
+    if id then return id end
+    if type(raw) == "string" then
+        local name = raw:lower()
+        for known, label in pairs(MALADY_NAMES) do
+            if label:lower() == name then return known end
+        end
+    end
+    return nil
+end
+
 -- Memeriksa apakah bot benar-benar memiliki malady apapun (bebas penyakit = false)
 function M.hasAnyMalady(botCtx)
     local b = botCtx or (type(getBot) == "function" and getBot())
     if not b then return "unknown" end
-    local mid = tonumber(b.malady)
+    local mid = M.resolveMaladyId(b)
     if mid and mid > 0 then return true, mid end
     if type(b.getMaladyDuration) == "function" then
         local dur = b:getMaladyDuration()
@@ -47,10 +66,10 @@ end
 function M.checkNeedsHospital(botCtx)
     local b = botCtx or (type(getBot) == "function" and getBot())
     if not b then return false, 0 end
-    local mid = tonumber(b.malady)
+    local mid = M.resolveMaladyId(b)
     if not mid or mid == 0 then
         if type(b.getMaladyDuration) == "function" and b:getMaladyDuration() > 0 then
-            mid = tonumber(b.malady) or 0
+            mid = mid or 0
         end
     end
     return (mid and CURE_TARGET_IDS[mid] == true), (mid or 0)
@@ -264,6 +283,7 @@ function M.runCure(botCtx, onProgress)
     print("[Step 4] Menunggu hingga status malady benar-benar hilang...")
     -- Loop menunggu sampai status malady benar-benar hilang (hasAnyMalady == false)
     -- Jika koneksi putus atau terlempar dari 4AID, hentikan dan laporkan false
+    -- Read fresh malady state immediately on arrival, then every five seconds.
     while true do
         if type(onProgress) == "function" then
             pcall(onProgress, "Menunggu sembuh di (66,39)")
@@ -275,6 +295,7 @@ function M.runCure(botCtx, onProgress)
         end
 
         local anySick, curId = M.hasAnyMalady(b)
+        print("[Hospital] Malady saat ini: ID=" .. tostring(curId) .. ", nama=" .. M.getMaladyName(curId) .. ", status=" .. tostring(anySick))
         if anySick == false then
             print("[Selesai] Status malady benar-benar hilang! Bot sembuh total di (66, 39).")
             return "cured"
@@ -282,7 +303,7 @@ function M.runCure(botCtx, onProgress)
             print("[Warning] Status malady tidak valid/unknown, menunggu kepastian data...")
         end
 
-        sleep(1000)
+        sleep(5000)
     end
 end
 

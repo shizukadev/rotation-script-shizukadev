@@ -65,9 +65,10 @@ local CONFIG = {
         DISCORD_USER_ID = "922775541097066576",
     },
 
+    AUTO_SPAM = { ENABLED = true, RECOVERY_SECONDS = 3600 },
     MALADY = {
-        GRUMBLETEETH = true,
-        CHICKEN_FEET = true,
+        GRUMBLETEETH = false,
+        CHICKEN_FEET = false,
     },
 
     WEBHOOK = {
@@ -262,6 +263,56 @@ end
 -- DISCORD WEBHOOK MONITORING (webhook_monitor.lua)
 -- Dikelola via modul terpadu webhook_monitor.
 -- ========================================================
+local spamRecoveryUntil = 0
+local SPAM_STATE_FILE = (os.getenv and (os.getenv("TEMP") or os.getenv("TMP")) or ".") .. "/lucifer_spam_recovery.txt"
+local function loadSpamRecovery()
+    local f = io.open(SPAM_STATE_FILE, "r")
+    if not f then return 0 end
+    local raw = f:read("*l")
+    f:close()
+    local untilTs = tonumber(raw)
+    if untilTs and untilTs > (os.time() or 0) then return untilTs end
+    return 0
+end
+local function saveSpamRecovery(untilTs)
+    local f = io.open(SPAM_STATE_FILE, "w")
+    if not f then return end
+    f:write(tostring(math.floor(untilTs)))
+    f:close()
+end
+spamRecoveryUntil = loadSpamRecovery()
+if spamRecoveryUntil > 0 then
+    print(string.format("[Spam] Recovery pengobatan dipulihkan dari file; AutoSpam OFF sampai %s.",
+        os.date and os.date("%H:%M:%S", spamRecoveryUntil) or tostring(spamRecoveryUntil)))
+end
+local function beginSpamRecovery()
+    local seconds = tonumber((CONFIG.AUTO_SPAM or {}).RECOVERY_SECONDS) or 3600
+    spamRecoveryUntil = os.time() + math.max(0, seconds)
+    saveSpamRecovery(spamRecoveryUntil)
+    if bot.auto_spam then bot.auto_spam.enabled = false end
+    print("[Spam] Recovery setelah pengobatan: AutoSpam OFF selama " .. tostring(seconds) .. " detik.")
+end
+local lastSpamCheck = nil
+local function updateSpamState()
+    if not bot.auto_spam then return end
+    if bot.status ~= BotStatus.online then
+        bot.auto_spam.enabled = false
+        lastSpamCheck = nil
+        return
+    end
+    local now = os.time()
+    if lastSpamCheck and now - lastSpamCheck < 5 then return end
+    lastSpamCheck = now
+    local cfg = CONFIG.AUTO_SPAM or {}
+    local ok, healthyOutsideHospital = pcall(function()
+        if bot.status ~= BotStatus.online then return false end
+        local id = tonumber(bot.malady)
+        return id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID")
+    end)
+    -- Preserve all owner-configured text, intervals and other spam options.
+    bot.auto_spam.enabled = cfg.ENABLED ~= false and ok and healthyOutsideHospital == true
+end
+
 local webhookMonitor = nil
 local function getWebhookMonitor()
     if not webhookMonitor then
@@ -283,6 +334,7 @@ local function getWebhookMonitor()
 end
 
 updateWebhook = function(currentAction)
+    updateSpamState()
     local mon = getWebhookMonitor()
     if mon and type(mon.tick) == "function" then
         pcall(function() mon.tick(currentAction) end)
@@ -325,13 +377,21 @@ local function applyBotSettings()
         bot.auto_trash = false
     end
 
+    -- Keep AutoMalady active for host status refresh; disable native disease actions.
+    -- Opsi asing diabaikan; dulu satu opsi tak dikenal menggagalkan seluruh startup.
     if bot.auto_malady then
-        local m = CONFIG.MALADY or {}
-        bot.auto_malady.auto_grumbleteeth = m.GRUMBLETEETH ~= false
-        bot.auto_malady.auto_chicken_feet = m.CHICKEN_FEET == true
-        bot.auto_malady.use_home = false
-        bot.auto_malady.auto_disconnect = false
-        bot.auto_malady.enabled = (m.GRUMBLETEETH ~= false) or (m.CHICKEN_FEET == true)
+        for _, key in ipairs({ "auto_grumbleteeth", "auto_chicken_feet" }) do
+            pcall(function() bot.auto_malady[key] = false end)
+        end
+        pcall(function() bot.auto_malady.enabled = true end)
+    else
+        print("[Setup] AutoMalady tidak tersedia di build host; status penyakit dibaca manual.")
+    end
+    local spamCfg = CONFIG.AUTO_SPAM or { ENABLED = true }
+    if bot.auto_spam then
+        updateSpamState()
+    else
+        print("[Setup] AutoSpam tidak tersedia; atur manual di host.")
     end
 
     for _, key in ipairs({ "auto_farm", "auto_harvest", "auto_plant" }) do
@@ -410,6 +470,15 @@ end
 -- ========================================================
 -- SETELAN ROTASI BAWAAN LUCIFER
 -- ========================================================
+local rotationFieldFailures = {}
+local function setRotationField(rotation, key, value)
+    local ok = pcall(function() rotation[key] = value end)
+    if not ok then
+        rotationFieldFailures[#rotationFieldFailures + 1] = key
+    end
+    return ok
+end
+
 local function applyRotationSettings()
     local rotation = bot.rotation
     if not rotation then
@@ -417,41 +486,48 @@ local function applyRotationSettings()
         return false
     end
 
-    rotation.enabled = false
+    if not pcall(function() rotation.enabled = false end) then
+        print("[Error] bot.rotation.enabled tidak bisa diubah. Rotasi tidak dapat dijalankan.")
+        return false
+    end
     if lockoutTriggered then return false end
 
-    rotation.auto_rest = false
-    rotation.harvest_roots = CONFIG.HARVEST_ROOTS == true
-    rotation.dynamic_delay = true
-    rotation.visit_random_worlds = false
-    rotation.custom_position = false
-    rotation.harvest_interval = hitInterval
-    rotation.plant_interval = placeInterval
-    rotation.break_interval = placeInterval
+    setRotationField(rotation, "auto_rest", false)
+    setRotationField(rotation, "harvest_roots", CONFIG.HARVEST_ROOTS == true)
+    setRotationField(rotation, "dynamic_delay", true)
+    setRotationField(rotation, "visit_random_worlds", false)
+    setRotationField(rotation, "custom_position", 0)
+    setRotationField(rotation, "harvest_interval", hitInterval)
+    setRotationField(rotation, "plant_interval", placeInterval)
+    setRotationField(rotation, "break_interval", placeInterval)
 
     if CONFIG.PNB and CONFIG.PNB.ENABLED ~= false then
-        rotation.pnb_in_home = true
+        setRotationField(rotation, "pnb_in_home", true)
         if CONFIG.PNB.WORLD and CONFIG.PNB.WORLD ~= "" then
-            rotation.pnb_world = CONFIG.PNB.WORLD
+            setRotationField(rotation, "pnb_world", CONFIG.PNB.WORLD)
         else
-            rotation.pnb_world = nil
+            setRotationField(rotation, "pnb_world", "")
         end
     else
-        rotation.pnb_in_home = false
-        rotation.pnb_world = nil
+        setRotationField(rotation, "pnb_in_home", false)
+        setRotationField(rotation, "pnb_world", "")
     end
 
-    rotation.seed_drop_amount = CONFIG.STORE_SEED_MIN or 100
+    setRotationField(rotation, "seed_drop_amount", CONFIG.STORE_SEED_MIN or 100)
 
     local packCfg = CONFIG.AUTO_BUY_PACK
     if packCfg and packCfg.ENABLED and packCfg.PricePack and packCfg.PackName then
-        bot.gem_limit = packCfg.PricePack
+        pcall(function() bot.gem_limit = packCfg.PricePack end)
         if type(bot.setPack) == "function" then
             local ok = pcall(function() bot:setPack(packCfg.PackName) end)
             if not ok then
                 print("[Setup] Peringatan: gagal setPack '" .. tostring(packCfg.PackName) .. "'. Atur pack di UI Lucifer.")
             end
         end
+    end
+
+    if #rotationFieldFailures > 0 then
+        print("[Setup] Peringatan: field rotasi tidak dikenal build host dilewati: " .. table.concat(rotationFieldFailures, ", "))
     end
 
     return true
@@ -539,9 +615,11 @@ local lastHospitalAttempt = 0
 local HOSPITAL_COOLDOWN = 180 -- Jeda 3 menit sebelum mengulang rute 4AID jika masih sakit
 local hospitalPending = false -- Status pengobatan sedang berjalan/menunggu sembuh
 local shouldResumeAfterCure = false -- Intent apakah rotasi harus dinyalakan kembali pasca sembuh
-local intentionalStop = false -- user stop intent
+local intentionalStop = false
+local farmRunIntent = okStartup == true -- user stop intent
 
 local function checkAndDispatchHospital()
+    if bot.status ~= BotStatus.online then return false end
     local mod = getHospitalModule()
     if not mod then return false end
 
@@ -554,6 +632,7 @@ local function checkAndDispatchHospital()
 
     if anySick == false then
         if hospitalPending then
+            beginSpamRecovery()
             hospitalPending = false
             if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
                 bot.rotation.enabled = true
@@ -571,7 +650,8 @@ local function checkAndDispatchHospital()
     end
 
     local needsCure, mid = mod.checkNeedsHospital(bot)
-    if not needsCure and not hospitalPending then
+    if needsCure ~= true or (mid ~= 1 and mid ~= 2) then
+        if hospitalPending and bot.rotation then bot.rotation.enabled = false end
         return false
     end
 
@@ -602,6 +682,7 @@ local function checkAndDispatchHospital()
     local status = mod.runCure(bot, updateWebhook)
 
     if status == "cured" then
+        beginSpamRecovery()
         hospitalPending = false
         if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
             bot.rotation.enabled = true
@@ -632,7 +713,7 @@ while true do
         updateWebhook("Bot Offline — Menunggu Reconnect...")
         sleep(2000)
     else
-        sleep(2000)
+        sleep(5000)
 
         local isOnline = (bot.status == BotStatus.online)
 
@@ -640,7 +721,7 @@ while true do
             local hadDisconnect = observedOfflineDuringWait or not wasOnline
             observedOfflineDuringWait = false
 
-            if not lockoutTriggered and not hospitalPending and not hadDisconnect and wasOnline and bot.rotation and bot.rotation.enabled == false and not intentionalStop then
+            if not lockoutTriggered and not hospitalPending and not hadDisconnect and wasOnline and farmRunIntent and bot.rotation and bot.rotation.enabled == false and not intentionalStop then
                 intentionalStop = true
                 print("[Rotation Final] Rotasi dimatikan secara manual oleh user. Watchdog menghormati perintah stop.")
             end

@@ -88,9 +88,10 @@ local CONFIG = {
 
     -- AutoMalady native: Grumbleteeth (ID 4) / Chicken Feet (ID 3).
     -- Torn Punching Muscle (ID 1) / Gem Cuts (ID 2) ditangani rute custom 4AID.
+    AUTO_SPAM = { ENABLED = true, RECOVERY_SECONDS = 3600 },
     MALADY = {
-        GRUMBLETEETH = true,
-        CHICKEN_FEET = true,
+        GRUMBLETEETH = false,
+        CHICKEN_FEET = false,
     },
 
     -- Webhook Live Monitor (webhook_edit)

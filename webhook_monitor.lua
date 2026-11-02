@@ -56,6 +56,7 @@ function M.new(bot, config, api)
         end)
         return ok and world or "In Transit"
     end
+    local lastDiseaseCheck = nil
     local obj = {}
     function obj.notify(message) return deliver(tostring(message), false) end
     function obj.tick(action)
@@ -74,7 +75,9 @@ function M.new(bot, config, api)
             end
         end
         -- Unknown/invalid readings never establish recovery; preserve prior state.
-        if online then
+        if not online then lastDiseaseCheck = nil end
+        if online and (not lastDiseaseCheck or t - lastDiseaseCheck >= 5) then
+            lastDiseaseCheck = t
             local id = tonumber(bot.malady)
             if id and id >= 0 and id % 1 == 0 then
                 if id > 0 and id ~= lastMalady then
