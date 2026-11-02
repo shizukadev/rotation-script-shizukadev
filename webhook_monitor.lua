@@ -24,6 +24,7 @@ function M.new(bot, config, api)
     local cfg = config.WEBHOOK or {}
     local alert = config.OFFLINE_ALERT or {}
     local offlineSince, offlineSent, lastMalady, lastDashboard = nil, false, nil, nil
+    local dashLogged = false
     local messageId = cfg.MESSAGE_ID
     local function now() return api.os.time() end
     local function enabled()
@@ -32,23 +33,42 @@ function M.new(bot, config, api)
     end
     local function deliver(content, dashboard)
         if not enabled() then return false end
-        local ok, err = pcall(function()
+        local usedEdit = dashboard and messageId and messageId ~= ""
+        local ok = pcall(function()
             -- Fresh webhook prevents embed fields accumulating between edits.
             local hook = api.Webhook.new(cfg.URL)
             hook.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
             hook.content = content
-            if dashboard and messageId and messageId ~= "" then
+            if usedEdit then
                 hook.message_id = tostring(messageId)
                 hook:edit()
             else
                 hook:send()
-                if dashboard and hook.message_id and hook.message_id ~= "" then
+                if dashboard and hook.message_id and tostring(hook.message_id) ~= "" then
                     messageId = hook.message_id
                 end
             end
         end)
-        if not ok and api.print then api.print("[Webhook] Request failed; delivery unverified.") end
-        return ok -- Invocation only; not a server delivery acknowledgement.
+        if ok then return true end
+
+        -- Edit gagal (id basi, pesan dihapus, atau channel lain): dashboard
+        -- jangan diam selamanya. Buang id lama lalu kirim pesan baru.
+        if usedEdit then
+            if api.print then api.print("[Webhook] Edit dashboard gagal; mengirim pesan baru.") end
+            messageId = nil
+            local okSend = pcall(function()
+                local hook = api.Webhook.new(cfg.URL)
+                hook.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
+                hook.content = content
+                hook:send()
+                if hook.message_id and tostring(hook.message_id) ~= "" then
+                    messageId = hook.message_id
+                end
+            end)
+            if okSend then return true end
+        end
+        if api.print then api.print("[Webhook] Request failed; delivery unverified.") end
+        return false -- Invocation only; not a server delivery acknowledgement.
     end
     local function currentWorld()
         local ok, world = pcall(function()
@@ -115,7 +135,14 @@ function M.new(bot, config, api)
             local rotText = rotationState()
 
             local body = string.format("**Bot:** %s\n**Status:** %s\n**World saat ini:** %s\n**Rotasi:** %s\n**Aktivitas:** %s\n**Gems:** %s", tostring(bot.name), online and "ONLINE" or "OFFLINE", currentWorld(), rotText, tostring(action or "-"), tostring(bot.gem_count or 0))
-            if deliver(body, true) then lastDashboard = t end
+            local dashOk = deliver(body, true)
+            if dashOk then
+                lastDashboard = t
+                if not dashLogged and api.print then
+                    dashLogged = true
+                    api.print("[Webhook] dashboard terkirim (" .. (messageId and ("edit id " .. tostring(messageId)) or "pesan baru") .. ")")
+                end
+            end
         end
     end
     return obj
