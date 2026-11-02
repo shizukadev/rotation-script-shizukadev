@@ -338,9 +338,10 @@ local function beginSpamRecovery()
 end
 local lastSpamCheck = nil
 local function updateSpamState()
-    if not bot.auto_spam then return end
+    local okObj, spamObj = pcall(function() return bot.auto_spam end)
+    if not okObj or not spamObj then return end
     if bot.status ~= BotStatus.online then
-        pcall(function() bot.auto_spam.enabled = false end)
+        pcall(function() spamObj.enabled = false end)
         lastSpamCheck = nil
         return
     end
@@ -354,7 +355,7 @@ local function updateSpamState()
         return id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID")
     end)
     -- Preserve all owner-configured text, intervals and other spam options.
-    pcall(function() bot.auto_spam.enabled = cfg.ENABLED ~= false and ok and healthyOutsideHospital == true end)
+    pcall(function() spamObj.enabled = cfg.ENABLED ~= false and ok and healthyOutsideHospital == true end)
 end
 
 local webhookMonitor = nil
@@ -392,54 +393,69 @@ sendWebhookNotification = function(msg)
     end
 end
 
-local function applyBotSettings()
-    local recon = CONFIG.AUTO_RECONNECT or {}
-    bot.auto_reconnect = recon.ENABLED ~= false
-    if recon.INTERVAL then bot.reconnect_interval = recon.INTERVAL end
-    if recon.BYPASS_LOGON ~= nil then
-        bot.bypass_logon = recon.BYPASS_LOGON
+-- WAJIB: rotasi tidak boleh nyala selama modul pesaing masih hidup.
+local function disableCompetingModules()
+    local failed = {}
+    for _, key in ipairs({ "auto_farm", "auto_harvest", "auto_plant" }) do
+        local ok = pcall(function()
+            local module = bot[key]
+            if module then module.enabled = false end
+        end)
+        if not ok then failed[#failed + 1] = key end
     end
-
-    -- Collect: TIDAK disentuh. Rotasi bawaan Lucifer yang mengurus collect saat
-    -- harvest; menimpa auto_collect/collect_range/collect_all membuat item tidak
-    -- terambil (range dipaksa kecil, collect_all dipaksa false).
-
-    bot.auto_wear = CONFIG.AUTO_WEAR ~= false
-    bot.wear_id = tonumber(CONFIG.WEAR_ID) or 98
-    local pick = CONFIG.PICKAXE_WORLD
-    local pickWorld = type(pick) == "table" and pick.world or pick
-    if type(pickWorld) == "string" and pickWorld ~= "" then
-        bot.wear_storage = pickWorld
+    if #failed > 0 then
+        print("[Setup] GAGAL: modul pesaing tidak bisa dimatikan (" .. table.concat(failed, ", ") .. "). Rotasi ditahan.")
+        return false
     end
+    return true
+end
 
-    local trash = CONFIG.AUTO_TRASH or {}
-    if trash.ENABLED ~= false and type(setTrashList) == "function" then
-        pcall(setTrashList, trash.ITEMS or {})
-        bot.auto_trash = true
-    else
-        bot.auto_trash = false
-    end
+-- OPSIONAL: tiap bagian diisolasi.
+local function applyOptionalBotSettings()
+    pcall(function()
+        local recon = CONFIG.AUTO_RECONNECT or {}
+        bot.auto_reconnect = recon.ENABLED ~= false
+        if recon.INTERVAL then bot.reconnect_interval = recon.INTERVAL end
+        if recon.BYPASS_LOGON ~= nil then bot.bypass_logon = recon.BYPASS_LOGON end
+    end)
 
-    -- Keep AutoMalady active for host status refresh; disable native disease actions.
-    -- Opsi asing diabaikan; dulu satu opsi tak dikenal menggagalkan seluruh startup.
-    if bot.auto_malady then
-        for _, key in ipairs({ "auto_grumbleteeth", "auto_chicken_feet" }) do
-            pcall(function() bot.auto_malady[key] = false end)
+    pcall(function()
+        bot.auto_wear = CONFIG.AUTO_WEAR ~= false
+        bot.wear_id = tonumber(CONFIG.WEAR_ID) or 98
+        local pick = CONFIG.PICKAXE_WORLD
+        local pickWorld = type(pick) == "table" and pick.world or pick
+        if type(pickWorld) == "string" and pickWorld ~= "" then
+            bot.wear_storage = pickWorld
         end
-        pcall(function() bot.auto_malady.enabled = true end)
-    else
-        print("[Setup] AutoMalady tidak tersedia di build host; status penyakit dibaca manual.")
-    end
-    local spamCfg = CONFIG.AUTO_SPAM or { ENABLED = true }
-    if bot.auto_spam then
-        updateSpamState()
+    end)
+
+    pcall(function()
+        local trash = CONFIG.AUTO_TRASH or {}
+        if trash.ENABLED ~= false and type(setTrashList) == "function" then
+            pcall(setTrashList, trash.ITEMS or {})
+            bot.auto_trash = true
+        else
+            bot.auto_trash = false
+        end
+    end)
+
+    pcall(function()
+        local malady = bot.auto_malady
+        if malady then
+            for _, key in ipairs({ "auto_grumbleteeth", "auto_chicken_feet" }) do
+                pcall(function() malady[key] = false end)
+            end
+            pcall(function() malady.enabled = true end)
+        else
+            print("[Setup] AutoMalady tidak tersedia di build host; status penyakit dibaca manual.")
+        end
+    end)
+
+    local okSpam, spamObj = pcall(function() return bot.auto_spam end)
+    if okSpam and spamObj then
+        pcall(updateSpamState)
     else
         print("[Setup] AutoSpam tidak tersedia; atur manual di host.")
-    end
-
-    for _, key in ipairs({ "auto_farm", "auto_harvest", "auto_plant" }) do
-        local module = bot[key]
-        if module then module.enabled = false end
     end
 end
 
@@ -657,14 +673,18 @@ local function startupStage(name, fn)
     print("[Setup] Selesai: " .. name)
     return result ~= false
 end
-local botSetupOK = startupStage("pengaturan bot", applyBotSettings)
+local competingOK = startupStage("matikan modul pesaing", disableCompetingModules)
+local botSetupOK = startupStage("pengaturan bot opsional", applyOptionalBotSettings)
 local worldsSetupOK = startupStage("registrasi world", registerWorlds)
 local rotationSetupOK = startupStage("pengaturan rotasi", applyRotationSettings)
 -- Hanya penyiapan ROTASI yang boleh menentukan rotasi menyala. Kegagalan
 -- pengaturan bot (AutoWear/AutoTrash/AutoMalady yang tidak cocok dengan build
 -- host) dulu mematikan rotasi seluruhnya: log berhenti di "GAGAL: pengaturan
 -- bot" dan enabled tidak pernah ditulis true.
-local okStartup = rotationSetupOK
+local okStartup = rotationSetupOK and competingOK
+if not competingOK then
+    print("[Setup] Rotasi TIDAK dinyalakan: modul pesaing masih aktif.")
+end
 if not botSetupOK then
     print("[Setup] Peringatan: sebagian pengaturan bot gagal diterapkan. Rotasi tetap dinyalakan.")
 end
