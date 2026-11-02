@@ -80,11 +80,19 @@ local function warpTo(b, world)
     if not waitOnline(b, 10) then return false end
     if b:isInWorld(world) and b:isInWorld() then return true end
     b:warp(world)
-    for _ = 1, 25 do
+    -- Warp is asynchronous; temporary non-online status is not a terminal failure.
+    -- Require two consecutive destination observations before pathfinding.
+    local stable = 0
+    for _ = 1, 30 do
         sleep(1000)
-        if not isHealthyState(b) then return false end
-        if b:isInWorld(world) and b:isInWorld() then sleep(1000); return true end
+        if b.status == BotStatus.online and b:isInWorld(world) and b:isInWorld() then
+            stable = stable + 1
+            if stable >= 2 then return true end
+        else
+            stable = 0
+        end
     end
+    print("[Hospital] Timeout warp: tujuan belum stabil setelah 30 detik.")
     return false
 end
 
