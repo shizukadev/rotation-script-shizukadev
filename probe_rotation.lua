@@ -65,4 +65,21 @@ for _, name in ipairs({ "runInbuiltRotation", "getInbuiltRotationStatus", "setup
     print("[Probe] global " .. name .. " = " .. type(rawget(_G, name)))
 end
 
+-- Apakah rotasi punya world untuk dikerjakan? enabled=true + status=3 tanpa
+-- farm terdaftar = ON tapi diam.
+pcall(function()
+    local farms = r.farms
+    print("[Probe] type(r.farms) = " .. type(farms))
+    local n, first = 0, {}
+    if type(farms) == "table" then
+        for i, w in ipairs(farms) do
+            n = n + 1
+            if i <= 3 then first[#first + 1] = tostring(w) end
+        end
+    end
+    print("[Probe] jumlah farm = " .. tostring(n) .. " | contoh: " .. table.concat(first, ","))
+end)
+pcall(function() print("[Probe] rotation.index = " .. tostring(r.index)) end)
+pcall(function() print("[Probe] getWorldManager = " .. type(getWorldManager)) end)
+
 print("[Probe] selesai. Kirim semua baris di atas.")
