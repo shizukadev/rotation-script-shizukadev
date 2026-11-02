@@ -65,21 +65,48 @@ for _, name in ipairs({ "runInbuiltRotation", "getInbuiltRotationStatus", "setup
     print("[Probe] global " .. name .. " = " .. type(rawget(_G, name)))
 end
 
--- Apakah rotasi punya world untuk dikerjakan? enabled=true + status=3 tanpa
--- farm terdaftar = ON tapi diam.
+-- Status rotasi: enum terdokumentasi (bukan tebakan).
+if type(RotationStatus) == "table" then
+    local names = {}
+    for k, v in pairs(RotationStatus) do names[#names + 1] = tostring(v) .. "=" .. tostring(k) end
+    table.sort(names)
+    local cur = read("status")
+    local label = "?"
+    for k, v in pairs(RotationStatus) do
+        if tostring(v) == cur then label = tostring(k) end
+    end
+    print("[Probe] RotationStatus: " .. table.concat(names, " "))
+    print("[Probe] status sekarang = " .. cur .. " (" .. label .. ")")
+else
+    print("[Probe] RotationStatus type = " .. type(RotationStatus))
+end
+
+-- Daftar farm yang SEBENARNYA dipakai rotasi: getWorldManager().worlds
 pcall(function()
-    local farms = r.farms
-    print("[Probe] type(r.farms) = " .. type(farms))
-    local n, first = 0, {}
-    if type(farms) == "table" then
-        for i, w in ipairs(farms) do
-            n = n + 1
-            if i <= 3 then first[#first + 1] = tostring(w) end
+    local inst = getWorldManager()
+    print("[Probe] type(inst.worlds) = " .. type(inst.worlds))
+    local total, selected, shown = 0, 0, 0
+    for _, w in pairs(inst.worlds) do
+        total = total + 1
+        if w.selected then selected = selected + 1 end
+        if shown < 3 then
+            shown = shown + 1
+            local okR, rdy = pcall(function() return w:ready() end)
+            local okS, st = pcall(function() return w:getStatus() end)
+            print(string.format("[Probe] world %s door=%s item=%s status=%s selected=%s ready=%s",
+                tostring(w.name), tostring(w.doorid), tostring(w.itemid),
+                tostring(okS and st or w.status), tostring(w.selected), tostring(okR and rdy or "?")))
         end
     end
-    print("[Probe] jumlah farm = " .. tostring(n) .. " | contoh: " .. table.concat(first, ","))
+    print("[Probe] worlds total=" .. total .. " selected=" .. selected)
 end)
-pcall(function() print("[Probe] rotation.index = " .. tostring(r.index)) end)
-pcall(function() print("[Probe] getWorldManager = " .. type(getWorldManager)) end)
+
+pcall(function()
+    local inst = getWorldManager()
+    local ss, ps = 0, 0
+    for _ in pairs(inst.seed_storages or {}) do ss = ss + 1 end
+    for _ in pairs(inst.pack_storages or {}) do ps = ps + 1 end
+    print("[Probe] seed_storages=" .. ss .. " pack_storages=" .. ps)
+end)
 
 print("[Probe] selesai. Kirim semua baris di atas.")

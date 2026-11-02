@@ -36,6 +36,7 @@ local rotationEnableError = nil
 -- dan rotasi tidak pernah dinyalakan lagi.
 local rotationConfirmedOn = false
 local rotationDiagPrinted = false
+local lastRotLog = nil
 local function setRotationEnabled(on)
     if not bot.rotation then return false end
     local ok, err = pcall(function() bot.rotation.enabled = on end)
@@ -468,6 +469,19 @@ local function registerWorlds()
         print("[Setup] Peringatan: CONFIG.STORAGE kosong. Seed & pack tidak akan disimpan otomatis.")
     end
 
+    -- Verifikasi lewat API terdokumentasi: manager.worlds[i].selected
+    local worldCount, selectedCount = 0, 0
+    pcall(function()
+        for _, w in pairs(manager.worlds or {}) do
+            worldCount = worldCount + 1
+            if w.selected then selectedCount = selectedCount + 1 end
+        end
+    end)
+    if worldCount > 0 and selectedCount == 0 then
+        print("[Setup] Peringatan: tidak ada farm terpilih. Rotasi akan menyala tapi diam; centang farm di UI Lucifer.")
+    elseif worldCount > 0 then
+        print(string.format("[Setup] Farm terpilih: %d/%d", selectedCount, worldCount))
+    end
     if type(manager.selectAll) == "function" then
         pcall(function() manager:selectAll() end)
     end
@@ -585,6 +599,14 @@ end
 -- Diagnostik satu kali: cetak apa yang sebenarnya ada di build host.
 -- Build ini bukan Lucifer stock (punya runInbuiltRotation / getInbuiltRotationStatus),
 -- jadi tebakan nama field tidak berguna. Satu baris log ini menjawab semuanya.
+-- Nama fase rotasi dari enum terdokumentasi (RotationStatus.*), bukan angka.
+local function rotationPhaseName(status)
+    if type(RotationStatus) ~= "table" then return tostring(status) end
+    for name, value in pairs(RotationStatus) do
+        if value == status then return tostring(name) end
+    end
+    return tostring(status)
+end
 local function dumpRotationDiagnostics()
     pcall(function()
         local r = bot.rotation
@@ -871,6 +893,17 @@ while true do
         end
 
         wasOnline = isOnline
+
+        -- Satu baris per menit: apakah rotasi benar-benar bergerak.
+        -- status adalah angka terdokumentasi; perubahannya menunjukkan aktivitas.
+        if not lastRotLog or (now - lastRotLog) >= 60 then
+            lastRotLog = now
+            pcall(function()
+                print(string.format("[Rot] enabled=%s status=%s world=%s",
+                    tostring(rotationIsOn()), rotationPhaseName(bot.rotation.status),
+                    tostring(bot:isInWorld() and bot:getWorld().name or "-")))
+            end)
+        end
         updateWebhook("Rotasi Bawaan Lucifer Berjalan")
     end
 end
