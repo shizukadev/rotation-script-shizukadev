@@ -390,13 +390,12 @@ local function applyBotSettings()
         bot.bypass_logon = recon.BYPASS_LOGON
     end
 
-    local collect = CONFIG.AUTO_COLLECT or {}
-    bot.auto_collect = collect.ENABLED ~= false
-    if collect.RANGE then bot.collect_range = collect.RANGE end
-    if collect.ALL ~= nil then bot.collect_all = collect.ALL end
+    -- Collect: TIDAK disentuh. Rotasi bawaan Lucifer yang mengurus collect saat
+    -- harvest; menimpa auto_collect/collect_range/collect_all membuat item tidak
+    -- terambil (range dipaksa kecil, collect_all dipaksa false).
 
     bot.auto_wear = CONFIG.AUTO_WEAR ~= false
-    bot.wear_id = 98
+    bot.wear_id = tonumber(CONFIG.WEAR_ID) or 98
     local pick = CONFIG.PICKAXE_WORLD
     local pickWorld = type(pick) == "table" and pick.world or pick
     if type(pickWorld) == "string" and pickWorld ~= "" then
@@ -525,10 +524,7 @@ local function applyRotationSettings()
         return false
     end
 
-    if not pcall(function() rotation.enabled = false end) then
-        print("[Error] bot.rotation.enabled tidak bisa diubah. Rotasi tidak dapat dijalankan.")
-        return false
-    end
+    -- rotation.enabled TIDAK disentuh di sini; satu toggle saja oleh pemanggil.
     if lockoutTriggered then return false end
 
     setRotationField(rotation, "auto_rest", false)

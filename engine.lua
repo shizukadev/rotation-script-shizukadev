@@ -342,11 +342,9 @@ local function applyBotSettings()
         bot.bypass_logon = recon.BYPASS_LOGON
     end
 
-    -- Collect objek di sekitar (dipakai rotasi saat panen)
-    local collect = CONFIG.AUTO_COLLECT or {}
-    bot.auto_collect = collect.ENABLED ~= false
-    if collect.RANGE then bot.collect_range = collect.RANGE end
-    if collect.ALL ~= nil then bot.collect_all = collect.ALL end
+    -- Collect: TIDAK disentuh. Rotasi bawaan Lucifer yang mengurus collect saat
+    -- harvest; menimpa auto_collect/collect_range/collect_all membuat item tidak
+    -- terambil (range dipaksa kecil, collect_all dipaksa false).
 
     -- Pickaxe: AutoWear ambil dari wear_storage kalau belum ada di tas
     bot.auto_wear = CONFIG.AUTO_WEAR ~= false
@@ -492,11 +490,9 @@ local function applyRotationSettings()
         return false
     end
 
-    -- Wajib berhasil: tanpa ini rotasi tidak bisa dikendalikan sama sekali.
-    if not pcall(function() rotation.enabled = false end) then
-        print("[Error] bot.rotation.enabled tidak bisa diubah. Rotasi tidak dapat dijalankan.")
-        return false
-    end
+    -- rotation.enabled TIDAK disentuh di sini. Dulu rotasi dimatikan lalu
+    -- dinyalakan pada tick yang sama; sebagian build mengabaikan toggle kedua,
+    -- jadi rotasi tidak pernah aktif saat start. Satu toggle saja, oleh pemanggil.
     if lockoutTriggered then return false end
 
     setRotationField(rotation, "auto_rest", false)

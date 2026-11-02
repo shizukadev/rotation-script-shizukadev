@@ -70,12 +70,9 @@ local CONFIG = {
         ITEMS = {},   -- contoh: { 18, 32 }
     },
 
-    -- AutoCollect: ambil objek drop di sekitar bot saat panen
-    AUTO_COLLECT = {
-        ENABLED = true,
-        RANGE = 3,
-        ALL = false,
-    },
+    -- AutoCollect TIDAK diatur script ini. Rotasi bawaan Lucifer sudah
+    -- mengumpulkan item saat harvest; menimpa auto_collect/collect_range/
+    -- collect_all membuat hasil panen tidak terambil. Atur di UI Lucifer.
 
     -- AutoReconnect: tunggu & sambung ulang otomatis saat DC
     AUTO_RECONNECT = {
