@@ -294,8 +294,13 @@ end
 local lastSpamCheck = nil
 local function updateSpamState()
     if not bot.auto_spam then return end
+    -- AutoSpam bisa read-only di sebagian build; jangan sampai mematikan script
+    -- (dulu error di sini muncul sebelum setup dan seluruh engine berhenti).
+    local function setSpam(on)
+        pcall(function() bot.auto_spam.enabled = on end)
+    end
     if bot.status ~= BotStatus.online then
-        bot.auto_spam.enabled = false
+        setSpam(false)
         lastSpamCheck = nil
         return
     end
@@ -309,7 +314,7 @@ local function updateSpamState()
         return bot.status == BotStatus.online and id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID")
     end)
     -- Preserve all owner-configured text, intervals and other spam options.
-    bot.auto_spam.enabled = cfg.ENABLED ~= false and ok and healthyOutsideHospital == true
+    setSpam(cfg.ENABLED ~= false and ok and healthyOutsideHospital == true)
 end
 
 local webhookMonitor = nil
@@ -469,7 +474,22 @@ local function registerWorlds()
         print("[Setup] Peringatan: CONFIG.STORAGE kosong. Seed & pack tidak akan disimpan otomatis.")
     end
 
-    -- Verifikasi lewat API terdokumentasi: manager.worlds[i].selected
+    -- Pilih farm SETELAH semua terdaftar, lalu verifikasi lewat API terdokumentasi
+    -- manager.worlds[i].selected. Dulu pengecekan dilakukan sebelum selectAll,
+    -- jadi selalu melaporkan "tidak ada farm terpilih".
+    local selectErr = nil
+    if type(manager.selectAll) == "function" then
+        local okSel, errSel = pcall(function() manager:selectAll() end)
+        if not okSel then selectErr = tostring(errSel) end
+    else
+        selectErr = "manager.selectAll tidak tersedia"
+    end
+    -- Sebagian build butuh farm di-assign ke bot ini sebelum rotation.enabled
+    -- bisa dinyalakan. pcall: build v2.86 murni tidak punya apply().
+    if type(manager.apply) == "function" then
+        pcall(function() manager:apply(bot) end)
+    end
+
     local worldCount, selectedCount = 0, 0
     pcall(function()
         for _, w in pairs(manager.worlds or {}) do
@@ -478,17 +498,12 @@ local function registerWorlds()
         end
     end)
     if worldCount > 0 and selectedCount == 0 then
-        print("[Setup] Peringatan: tidak ada farm terpilih. Rotasi akan menyala tapi diam; centang farm di UI Lucifer.")
+        print(string.format("[Setup] Peringatan: 0/%d farm terpilih setelah selectAll%s. Rotasi akan menyala tapi diam; centang farm di UI Lucifer.",
+            worldCount, selectErr and (" (selectAll gagal: " .. selectErr .. ")") or ""))
     elseif worldCount > 0 then
         print(string.format("[Setup] Farm terpilih: %d/%d", selectedCount, worldCount))
-    end
-    if type(manager.selectAll) == "function" then
-        pcall(function() manager:selectAll() end)
-    end
-    -- Sebagian build butuh farm di-assign ke bot ini sebelum rotation.enabled
-    -- bisa dinyalakan. pcall: build v2.86 murni tidak punya apply().
-    if type(manager.apply) == "function" then
-        pcall(function() manager:apply(bot) end)
+    else
+        print("[Setup] Peringatan: manager.worlds kosong; tidak ada farm yang bisa dibaca.")
     end
 
     print(string.format("[Setup] %d world farm terdaftar di rotasi Lucifer.", registered))
@@ -641,7 +656,17 @@ end
 local botSetupOK = startupStage("pengaturan bot", applyBotSettings)
 local worldsSetupOK = startupStage("registrasi world", registerWorlds)
 local rotationSetupOK = startupStage("pengaturan rotasi", applyRotationSettings)
-local okStartup = botSetupOK and worldsSetupOK and rotationSetupOK
+-- Hanya penyiapan ROTASI yang boleh menentukan rotasi menyala. Kegagalan
+-- pengaturan bot (AutoWear/AutoTrash/AutoMalady yang tidak cocok dengan build
+-- host) dulu mematikan rotasi seluruhnya: log berhenti di "GAGAL: pengaturan
+-- bot" dan enabled tidak pernah ditulis true.
+local okStartup = rotationSetupOK
+if not botSetupOK then
+    print("[Setup] Peringatan: sebagian pengaturan bot gagal diterapkan. Rotasi tetap dinyalakan.")
+end
+if not worldsSetupOK then
+    print("[Setup] Peringatan: registrasi world gagal. Rotasi tetap dinyalakan; periksa daftar farm di UI Lucifer.")
+end
 if okStartup and not lockoutTriggered then
     if setRotationEnabled(true) then
         rotationConfirmedOn = (rotationIsOn() == true)
