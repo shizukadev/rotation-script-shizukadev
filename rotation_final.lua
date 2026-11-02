@@ -93,6 +93,21 @@ end
 
 bot.leave_world_before_warp = false
 
+local rotationEnableError = nil
+local function setRotationEnabled(on)
+    if not bot.rotation then return false end
+    local ok, err = pcall(function() bot.rotation.enabled = on end)
+    if not ok then
+        rotationEnableError = tostring(err)
+        if on then
+            print("[Rotation] Gagal menyalakan rotasi: " .. rotationEnableError)
+        end
+        return false
+    end
+    rotationEnableError = nil
+    return true
+end
+
 local intervals = CONFIG.ACTION_INTERVALS or {}
 local hitInterval = intervals.hit or 0.18
 local placeInterval = intervals.place or 0.16
@@ -119,7 +134,7 @@ local function waitOnline(timeout)
                 inLoginAttempt = false
                 print("[Security] Sinyal reset manual dari owner terdeteksi pada runtime. Lockout direset.")
             else
-                if bot.rotation then bot.rotation.enabled = false end
+                if bot.rotation then setRotationEnabled(false) end
                 bot.auto_reconnect = false
                 bot.bypass_logon = false
             end
@@ -163,7 +178,7 @@ local function waitOnline(timeout)
                 lockoutTriggered = true
                 bot.auto_reconnect = false
                 bot.bypass_logon = false
-                if bot.rotation then bot.rotation.enabled = false end
+                if bot.rotation then setRotationEnabled(false) end
                 local reason = countExceeded
                     and string.format("Transisi gagal login mencapai %d/%d kali", loginFailCount, maxFailTries)
                     or string.format("Durasi offline/gagal login mencapai %d/%d detik", (now - loginFailStartTime), maxFailSecs)
@@ -462,6 +477,10 @@ local function registerWorlds()
     if type(manager.selectAll) == "function" then
         pcall(function() manager:selectAll() end)
     end
+    -- Sebagian build butuh farm di-assign ke bot ini sebelum rotation.enabled bisa dinyalakan.
+    if type(manager.apply) == "function" then
+        pcall(function() manager:apply(bot) end)
+    end
 
     print(string.format("[Setup] %d world farm terdaftar di rotasi Lucifer.", registered))
     return true
@@ -497,9 +516,28 @@ local function applyRotationSettings()
     setRotationField(rotation, "dynamic_delay", true)
     setRotationField(rotation, "visit_random_worlds", false)
     setRotationField(rotation, "custom_position", 0)
-    setRotationField(rotation, "harvest_interval", hitInterval)
-    setRotationField(rotation, "plant_interval", placeInterval)
-    setRotationField(rotation, "break_interval", placeInterval)
+
+    -- v2.86: interval lewat bot:setInterval(Action.*), bukan field rotation.*
+    local actionIntervals = {
+        { "hit", hitInterval }, { "place", placeInterval },
+        { "harvest", hitInterval }, { "plant", placeInterval },
+        { "break", placeInterval }, { "drop", placeInterval },
+    }
+    if type(Action) == "table" and type(bot.setInterval) == "function" then
+        for _, pair in ipairs(actionIntervals) do
+            local key, seconds = pair[1], pair[2]
+            if Action[key] ~= nil then
+                local ok = pcall(function() bot:setInterval(Action[key], seconds) end)
+                if not ok then
+                    print("[Setup] Peringatan: setInterval(Action." .. key .. ") ditolak host.")
+                end
+            end
+        end
+    else
+        setRotationField(rotation, "harvest_interval", hitInterval)
+        setRotationField(rotation, "plant_interval", placeInterval)
+        setRotationField(rotation, "break_interval", placeInterval)
+    end
 
     if CONFIG.PNB and CONFIG.PNB.ENABLED ~= false then
         setRotationField(rotation, "pnb_in_home", true)
@@ -552,10 +590,13 @@ local worldsSetupOK = startupStage("registrasi world", registerWorlds)
 local rotationSetupOK = startupStage("pengaturan rotasi", applyRotationSettings)
 local okStartup = botSetupOK and worldsSetupOK and rotationSetupOK
 if okStartup and not lockoutTriggered then
-    bot.rotation.enabled = true
-    print("[Rotation Final] Rotasi bawaan Lucifer AKTIF. Panen/tanam/PNB/drop seed/beli pack dijalankan oleh Lucifer.")
+    if setRotationEnabled(true) then
+        print("[Rotation Final] Rotasi bawaan Lucifer AKTIF. Panen/tanam/PNB/drop seed/beli pack dijalankan oleh Lucifer.")
+    elseif rotationEnableError then
+        print("[Rotation Final] Rotasi GAGAL dinyalakan oleh host. Supervisor penyakit tetap berjalan; nyalakan toggle manual di UI Lucifer.")
+    end
 else
-    if bot.rotation then bot.rotation.enabled = false end
+    if bot.rotation then setRotationEnabled(false) end
 end
 updateWebhook("Rotasi Bawaan Lucifer Aktif", "-")
 
@@ -635,7 +676,7 @@ local function checkAndDispatchHospital()
             beginSpamRecovery()
             hospitalPending = false
             if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
-                bot.rotation.enabled = true
+                setRotationEnabled(true)
                 shouldResumeAfterCure = false
                 print("[Rotation Final] Malady hilang terverifikasi. Rotasi bawaan dilanjutkan.")
                 return true
@@ -645,19 +686,19 @@ local function checkAndDispatchHospital()
     end
 
     if anySick == "unknown" then
-        if hospitalPending and bot.rotation then bot.rotation.enabled = false end
+        if hospitalPending and bot.rotation then setRotationEnabled(false) end
         return false
     end
 
     local needsCure, mid = mod.checkNeedsHospital(bot)
     if needsCure ~= true or (mid ~= 1 and mid ~= 2) then
-        if hospitalPending and bot.rotation then bot.rotation.enabled = false end
+        if hospitalPending and bot.rotation then setRotationEnabled(false) end
         return false
     end
 
     local now = os.time and os.time() or 0
     if hospitalPending and (now - lastHospitalAttempt) < HOSPITAL_COOLDOWN then
-        if bot.rotation then bot.rotation.enabled = false end
+        if bot.rotation then setRotationEnabled(false) end
         return false
     end
 
@@ -676,7 +717,7 @@ local function checkAndDispatchHospital()
     end
 
     if bot.rotation then
-        bot.rotation.enabled = false
+        setRotationEnabled(false)
     end
 
     local status = mod.runCure(bot, updateWebhook)
@@ -685,7 +726,7 @@ local function checkAndDispatchHospital()
         beginSpamRecovery()
         hospitalPending = false
         if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
-            bot.rotation.enabled = true
+            setRotationEnabled(true)
             print("[Rotation Final] Pengobatan selesai (sembuh total). Rotasi bawaan dilanjutkan.")
             if type(sendWebhookNotification) == "function" then
                 sendWebhookNotification(string.format("✅ **[Malady Cured]** Penyakit pada bot **%s** berhasil disembuhkan di 4AID! Rotasi bawaan dilanjutkan.", tostring(bot.name)))
@@ -693,7 +734,7 @@ local function checkAndDispatchHospital()
             return true
         end
     else
-        if bot.rotation then bot.rotation.enabled = false end
+        if bot.rotation then setRotationEnabled(false) end
         return false
     end
 end
@@ -742,9 +783,9 @@ while true do
                     wasOnline = false
                 elseif isOnline then
                     if lockoutTriggered then
-                        if bot.rotation then bot.rotation.enabled = false end
+                        if bot.rotation then setRotationEnabled(false) end
                     elseif not intentionalStop and not hospitalPending and hadDisconnect and bot.rotation and bot.rotation.enabled ~= true then
-                        bot.rotation.enabled = true
+                        setRotationEnabled(true)
                         print("[Rotation Final] Bot pulih dari disconnect. Rotasi bawaan dinyalakan kembali.")
                     end
                 end
