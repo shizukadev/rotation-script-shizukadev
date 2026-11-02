@@ -934,10 +934,21 @@ end
 print("[Engine] Memulai driver rotasi Lucifer v2.86...")
 updateWebhook("Engine Dimulai", "-")
 
-applyBotSettings()
-registerWorlds()
-
-local okStartup = applyRotationSettings()
+local function startupStage(name, fn)
+    print("[Setup] Mulai: " .. name)
+    local ok, result = pcall(fn)
+    if not ok then
+        -- Do not print exception text: host exceptions may contain private config.
+        print("[Setup] GAGAL: " .. name .. ". Periksa kompatibilitas API; hospital supervisor tetap dijalankan.")
+        return false
+    end
+    print("[Setup] Selesai: " .. name)
+    return result ~= false
+end
+local botSetupOK = startupStage("pengaturan bot", applyBotSettings)
+local worldsSetupOK = startupStage("registrasi world", registerWorlds)
+local rotationSetupOK = startupStage("pengaturan rotasi", applyRotationSettings)
+local okStartup = botSetupOK and worldsSetupOK and rotationSetupOK
 if okStartup and not lockoutTriggered then
     bot.rotation.enabled = true
     print("[Engine] Rotasi bawaan Lucifer AKTIF. Panen/tanam/PNB/drop seed/beli pack dijalankan oleh Lucifer.")
