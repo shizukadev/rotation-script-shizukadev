@@ -7,6 +7,43 @@ local M = {}
 local TARGET_WORLD = "4AID"
 local CURE_TARGET_IDS = { [1] = true, [2] = true } -- 1: Torn Muscle, 2: Gem Cuts
 
+local MALADY_NAMES = {
+    [0] = "Healthy",
+    [1] = "Torn Punching Muscle",
+    [2] = "Gem Cuts",
+    [3] = "Chicken Feet",
+    [4] = "Grumbleteeth",
+    [5] = "Broken Heart",
+    [6] = "Chaos Infection",
+    [7] = "Moldy Guts",
+    [8] = "Brainworms",
+    [9] = "Lupus",
+    [10] = "Ecto-Bones",
+    [11] = "Fatty Liver",
+}
+
+function M.getMaladyName(id)
+    return MALADY_NAMES[tonumber(id)] or ("Unknown Malady (" .. tostring(id) .. ")")
+end
+
+-- Memeriksa apakah bot benar-benar memiliki malady apapun (bebas penyakit = false)
+function M.hasAnyMalady(botCtx)
+    local b = botCtx or (type(getBot) == "function" and getBot())
+    if not b then return "unknown" end
+    local mid = tonumber(b.malady)
+    if mid and mid > 0 then return true, mid end
+    if type(b.getMaladyDuration) == "function" then
+        local dur = b:getMaladyDuration()
+        if dur and dur > 0 then
+            return true, mid or 1
+        elseif dur == 0 and mid == 0 then
+            return false, 0
+        end
+    end
+    if mid == 0 then return false, 0 end
+    return "unknown"
+end
+
 function M.checkNeedsHospital(botCtx)
     local b = botCtx or (type(getBot) == "function" and getBot())
     if not b then return false, 0 end
@@ -19,47 +56,71 @@ function M.checkNeedsHospital(botCtx)
     return (mid and CURE_TARGET_IDS[mid] == true), (mid or 0)
 end
 
-local function waitOnline(b)
-    while b.status ~= BotStatus.online do sleep(1000) end
+local function waitOnline(b, timeout)
+    local tries = timeout or 30
+    while tries > 0 do
+        if b.status == BotStatus.online then return true end
+        sleep(1000)
+        tries = tries - 1
+    end
+    return b.status == BotStatus.online
+end
+
+local function isHealthyState(b, targetWorld)
+    if b.status ~= BotStatus.online then return false end
+    if targetWorld then
+        if type(b.isInWorld) == "function" and not b:isInWorld(targetWorld) then
+            return false
+        end
+    end
     return true
 end
 
 local function warpTo(b, world)
-    if not waitOnline(b) then return false end
+    if not waitOnline(b, 10) then return false end
     if b:isInWorld(world) and b:isInWorld() then return true end
     b:warp(world)
-    for _ = 1, 30 do
+    for _ = 1, 25 do
         sleep(1000)
+        if not isHealthyState(b) then return false end
         if b:isInWorld(world) and b:isInWorld() then sleep(1000); return true end
-        if not waitOnline(b) then return false end
     end
     return false
 end
 
-local function walkTo(b, x, y)
-    if not waitOnline(b) then return false end
+local function walkTo(b, x, y, targetWorld)
+    if not waitOnline(b, 5) then return false end
+    if not isHealthyState(b, targetWorld) then return false end
     if b.x == x and b.y == y then return true end
+
     local ok = b:findPath(x, y)
     sleep(500)
-    return (b.x == x and b.y == y) or (ok and (b.x == x and b.y == y))
+    -- Validasi ulang koneksi, world, dan posisi pasca-delay blocking
+    if not isHealthyState(b, targetWorld) then return false end
+    return (b.x == x and b.y == y)
 end
 
-local function enterPortal(b, x, y)
+local function enterPortal(b, x, y, targetWorld)
+    if not isHealthyState(b, targetWorld) then return false end
     if type(b.enter) == "function" then
         b:enter()
     end
     b:hit(x, y)
     sleep(400)
+    return isHealthyState(b)
 end
 
 local function sendAdventureDoorPacket(b, tx, ty, btn)
+    if b.status ~= BotStatus.online then return false end
     local pkt = string.format("action|dialog_return\ndialog_name|adventure_door\ntilex|%d|\ntiley|%d|\nbuttonClicked|%s\n", tx, ty, btn)
     if type(b.sendPacket) == "function" then
         b:sendPacket(2, pkt)
+        return true
     end
+    return false
 end
 
-function M.runCure(botCtx)
+function M.runCure(botCtx, onProgress)
     local b = botCtx or (type(getBot) == "function" and getBot())
     if not b then
         print("[Error] Bot context tidak ditemukan.")
@@ -75,7 +136,7 @@ function M.runCure(botCtx)
 
     print(string.format("[Check] Terdeteksi penyakit ID %d (Torn Muscle / Gem Cuts). Memulai pengobatan ke 4AID...", mid))
 
-    local dialogHookRegistered = false
+    local dialogReceived = false
     local function dialogCallback(varlist)
         if not varlist or type(varlist.get) ~= "function" then return end
         local v0 = varlist:get(0)
@@ -84,11 +145,13 @@ function M.runCure(botCtx)
             local v1 = varlist:get(1)
             local content = v1 and (v1.getString and v1:getString() or tostring(v1)) or ""
             if content:find("adventure_door") and content:find("button0") then
+                dialogReceived = true
                 sendAdventureDoorPacket(b, 50, 15, "button0")
             end
         end
     end
 
+    local dialogHookRegistered = false
     if type(addEvent) == "function" and type(Event) == "table" and Event.variantlist then
         pcall(function()
             addEvent(Event.variantlist, dialogCallback)
@@ -110,17 +173,26 @@ function M.runCure(botCtx)
     end
 
     print("[Step 1] Berjalan ke portal (22, 16)...")
-    if not walkTo(b, 22, 16) then
-        print("[Error] Gagal findPath ke portal (22, 16)")
+    if not walkTo(b, 22, 16, TARGET_WORLD) then
+        print("[Error] Gagal findPath ke portal (22, 16) atau terputus.")
         cleanup()
         return false
     end
-    enterPortal(b, 22, 16)
+    if not enterPortal(b, 22, 16, TARGET_WORLD) then
+        print("[Error] Terputus saat interaksi portal (22, 16)")
+        cleanup()
+        return false
+    end
     sleep(1500)
 
     print("[Step 2] Mengambil adventure key di (61, 12)...")
-    if not walkTo(b, 61, 12) then
-        print("[Error] Gagal findPath ke adventure key (61, 12)")
+    if not walkTo(b, 61, 12, TARGET_WORLD) then
+        print("[Error] Gagal findPath ke adventure key (61, 12) atau salah world/terputus.")
+        cleanup()
+        return false
+    end
+    if not isHealthyState(b, TARGET_WORLD) then
+        print("[Error] Salah world atau offline saat di posisi key (61, 12)")
         cleanup()
         return false
     end
@@ -128,17 +200,27 @@ function M.runCure(botCtx)
     sleep(800)
 
     print("[Step 2] Berjalan ke portal (64, 12)...")
-    if not walkTo(b, 64, 12) then
-        print("[Error] Gagal findPath ke portal (64, 12)")
+    if not walkTo(b, 64, 12, TARGET_WORLD) then
+        print("[Error] Gagal findPath ke portal (64, 12) atau salah world/terputus.")
         cleanup()
         return false
     end
-    enterPortal(b, 64, 12)
+    if not enterPortal(b, 64, 12, TARGET_WORLD) then
+        print("[Error] Terputus saat interaksi portal (64, 12)")
+        cleanup()
+        return false
+    end
     sleep(1500)
 
     print("[Step 3] Berjalan ke adventure door (50, 15)...")
-    if not walkTo(b, 50, 15) then
-        print("[Error] Gagal findPath ke adventure door (50, 15)")
+    if not walkTo(b, 50, 15, TARGET_WORLD) then
+        print("[Error] Gagal findPath ke adventure door (50, 15) atau salah world/terputus.")
+        cleanup()
+        return false
+    end
+
+    if not isHealthyState(b, TARGET_WORLD) then
+        print("[Error] Bot offline atau salah world sebelum interaksi adventure door.")
         cleanup()
         return false
     end
@@ -148,16 +230,57 @@ function M.runCure(botCtx)
     end
     b:hit(50, 15)
     sleep(500)
-    sendAdventureDoorPacket(b, 50, 15, "button0")
-    sleep(1000)
 
+    if not isHealthyState(b, TARGET_WORLD) then
+        print("[Error] Bot offline atau salah world saat mencoba dialog adventure door.")
+        cleanup()
+        return false
+    end
+
+    local sent = sendAdventureDoorPacket(b, 50, 15, "button0")
+    if not sent and not dialogReceived then
+        print("[Error] sendPacket tidak tersedia atau gagal mengirim dialog packet.")
+        cleanup()
+        return false
+    end
+
+    sleep(1000)
     cleanup()
-    print("[Selesai] Berhasil masuk ke SURG AREA.")
-    return true
+
+    print("[Step 4] Berjalan ke area operasi (66, 39)...")
+    if not walkTo(b, 66, 39, TARGET_WORLD) then
+        print("[Error] Gagal findPath ke area operasi (66, 39) atau terputus.")
+        return false
+    end
+
+    print("[Step 4] Menunggu hingga status malady benar-benar hilang...")
+    -- Loop menunggu sampai status malady benar-benar hilang (hasAnyMalady == false)
+    -- Jika koneksi putus atau terlempar dari 4AID, hentikan dan laporkan false
+    while true do
+        if type(onProgress) == "function" then
+            pcall(onProgress, "Menunggu sembuh di (66,39)")
+        end
+
+        if not isHealthyState(b, TARGET_WORLD) then
+            print("[Error] Bot offline atau terlempar saat menunggu sembuh di (66, 39).")
+            return false
+        end
+
+        local anySick, curId = M.hasAnyMalady(b)
+        if anySick == false then
+            print("[Selesai] Status malady benar-benar hilang! Bot sembuh total di (66, 39).")
+            return "cured"
+        elseif anySick == "unknown" then
+            print("[Warning] Status malady tidak valid/unknown, menunggu kepastian data...")
+        end
+
+        sleep(1000)
+    end
 end
 
--- Eksekusi otomatis jika dijalankan sebagai standalone script
-if ... ~= "module" and type(getBot) == "function" and getBot() then
+-- Eksekusi otomatis HANYA jika dipanggil langsung sebagai script mandiri utama
+-- (Bukan saat dimuat via require("auto_malady_4aid") atau loadfile/dofile)
+if ... == nil and type(getBot) == "function" and getBot() then
     M.runCure()
 end
 

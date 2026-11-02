@@ -28,12 +28,100 @@ local placeInterval = intervals.place or 0.16
 -- ========================================================
 -- HELPER
 -- ========================================================
+local updateWebhook, sendWebhookNotification
+local observedOfflineDuringWait = false
+local loginFailCount = 0
+local loginFailStartTime = nil
+local lockoutTriggered = false
+local lastObservedStatus = nil
+local inLoginAttempt = false
+local lastAttemptWasFailure = false
+
 local function waitOnline(timeout)
-    for _ = 1, (timeout or 30) do
+    local tries = timeout or 30
+    if updateWebhook then updateWebhook("Menunggu reconnect") end
+    while true do
+        if lockoutTriggered then
+            -- Reset lockout terjadi HANYA jika owner menyalakan kembali auto_reconnect secara manual saat bot offline/login
+            -- atau secara sengaja menyetel auto_reconnect = true saat sedang terkunci
+            if bot.auto_reconnect == true then
+                lockoutTriggered = false
+                loginFailCount = 0
+                loginFailStartTime = nil
+                lastAttemptWasFailure = false
+                inLoginAttempt = false
+                print("[Security] Sinyal reset manual dari owner terdeteksi pada runtime. Lockout direset.")
+            else
+                if bot.rotation then bot.rotation.enabled = false end
+                bot.auto_reconnect = false
+                bot.bypass_logon = false
+            end
+        end
+        if updateWebhook then updateWebhook("Menunggu reconnect") end
+        local reconCfg = CONFIG.AUTO_RECONNECT or {}
+        local maxFailTries = reconCfg.MAX_FAIL_ATTEMPTS or 15
+        local maxFailSecs = (reconCfg.MAX_FAIL_MINUTES or 5) * 60
+        local now = os.time and os.time() or 0
+
+        -- Deteksi transisi status kegagalan login terminal:
+        -- Dihitung 1 kali per transisi masuk ke status error terminal (logon_fail, error_connecting, too_many_login, server_overload, http_block)
+        local curStatus = bot.status
+        if not lockoutTriggered and curStatus ~= BotStatus.online then
+            if not loginFailStartTime then loginFailStartTime = now end
+
+            local isTerminalFailure = false
+            if BotStatus and (
+                curStatus == BotStatus.logon_fail or
+                curStatus == BotStatus.error_connecting or
+                curStatus == BotStatus.too_many_login or
+                curStatus == BotStatus.server_overload or
+                curStatus == BotStatus.http_block
+            ) then
+                if curStatus ~= lastObservedStatus then
+                    isTerminalFailure = true
+                end
+            end
+
+            if isTerminalFailure then
+                loginFailCount = loginFailCount + 1
+            end
+
+            -- Evaluasi ambang batas: hitungan transisi gagal login ATAU batas durasi gagal login
+            local durationExceeded = (now - loginFailStartTime) >= maxFailSecs
+            local countExceeded = loginFailCount >= maxFailTries
+
+            if countExceeded or durationExceeded then
+                lockoutTriggered = true
+                bot.auto_reconnect = false
+                bot.bypass_logon = false
+                if bot.rotation then bot.rotation.enabled = false end
+                local reason = countExceeded
+                    and string.format("Transisi gagal login mencapai %d/%d kali", loginFailCount, maxFailTries)
+                    or string.format("Durasi offline/gagal login mencapai %d/%d detik", (now - loginFailStartTime), maxFailSecs)
+                print(string.format("[Security] %s. Mematikan bypass_logon dan auto_reconnect permanen sampai owner menyalakan manual.", reason))
+                if type(sendWebhookNotification) == "function" then
+                    sendWebhookNotification(string.format("🛑 **[Login Fail Lockout]** Bot **%s** %s! `bypass_logon` dan `auto_reconnect` telah DINONAKTIFKAN. Harap periksa dan nyalakan secara manual.", tostring(bot.name), reason))
+                end
+            end
+        elseif curStatus == BotStatus.online then
+            if not lockoutTriggered then
+                loginFailCount = 0
+                loginFailStartTime = nil
+            else
+                if bot.rotation then bot.rotation.enabled = false end
+            end
+        end
+        end
+
+        lastObservedStatus = curStatus
+
         if bot.status == BotStatus.online then return true end
+        observedOfflineDuringWait = true
         sleep(1000)
+        tries = tries - 1
+        if tries <= 0 then break end
     end
-    return false
+    return bot.status == BotStatus.online
 end
 
 local function farmWorldName(farm)
@@ -107,72 +195,40 @@ local function resolveFarmList()
 end
 
 -- ========================================================
--- DISCORD WEBHOOK MONITORING (EDIT PESAN REALTIME)
--- Tidak ada padanan bawaan Lucifer, jadi tetap di sini.
+-- DISCORD WEBHOOK MONITORING (webhook_monitor.lua)
+-- Dikelola via modul terpadu webhook_monitor.
 -- ========================================================
-local webhookClient = nil
-local lastWebhookSent = 0
-
-local function updateWebhook(currentAction, activeFarm)
-    local cfg = CONFIG.WEBHOOK
-    if not cfg or not cfg.ENABLED or not cfg.URL or cfg.URL == "" or cfg.URL:find("MASUKKAN_URL") then
-        return
-    end
-
-    local now = os.time and os.time() or 0
-    if (now - lastWebhookSent) < 3 then return end
-    lastWebhookSent = now
-
-    if not webhookClient then
-        webhookClient = Webhook.new(cfg.URL)
-        webhookClient.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
-    end
-
-    if cfg.MESSAGE_ID and cfg.MESSAGE_ID ~= "" then
-        webhookClient.message_id = tostring(cfg.MESSAGE_ID)
-    end
-
-    local isOnline = (bot.status == BotStatus.online)
-    local currentWorld = (bot:isInWorld() and bot:getWorld().name or "In Transit")
-    local tilePos = string.format("(%d, %d)", bot.x or 0, bot.y or 0)
-    local ping = tostring(bot:getPing()) .. " ms"
-    local gems = tostring(bot.gem_count or 0)
-
-    local inv = bot:getInventory()
-    local slots = inv and (tostring(inv.itemcount) .. "/" .. tostring(inv.slotcount)) or "-"
-    local emptySlots = inv and tostring(inv.emptyslots) or "-"
-
-    local packItemStr = "-"
-    local packCfg = CONFIG.AUTO_BUY_PACK
-    if packCfg and packCfg.ENABLED and packCfg.ItemIDOfPack and inv then
-        local parts = {}
-        for _, id in ipairs(packCfg.ItemIDOfPack) do
-            local c = inv:findItem(id)
-            if c > 0 then table.insert(parts, string.format("ID %d: %d", id, c)) end
+local webhookMonitor = nil
+local function getWebhookMonitor()
+    if not webhookMonitor then
+        local ok, mod = pcall(require, "webhook_monitor")
+        if not ok or type(mod) ~= "table" then
+            local f = io.open("webhook_monitor.lua", "r") or io.open("lucifer-rotation-main/webhook_monitor.lua", "r")
+            if f then
+                local code = f:read("*a")
+                f:close()
+                local chunk = (loadstring or load)(code, "@webhook_monitor.lua")
+                if chunk then mod = chunk() end
+            end
         end
-        if #parts > 0 then packItemStr = table.concat(parts, ", ") end
+        if mod and type(mod.new) == "function" then
+            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, Webhook = Webhook, print = print })
+        end
     end
+    return webhookMonitor
+end
 
-    local statusColor = isOnline and 3066993 or 15158332
+updateWebhook = function(currentAction)
+    local mon = getWebhookMonitor()
+    if mon and type(mon.tick) == "function" then
+        pcall(function() mon.tick(currentAction) end)
+    end
+end
 
-    webhookClient.content = ""
-    webhookClient.embed1.use = true
-    webhookClient.embed1.color = statusColor
-    webhookClient.embed1.title = "📊 Lucifer Rotation v2.86 — " .. tostring(bot.name)
-    webhookClient.embed1.description = string.format("**Aktivitas:** %s\n**Target Farm:** %s", tostring(currentAction or "-"), tostring(activeFarm or "-"))
-
-    webhookClient.embed1:addField("Status", isOnline and "🟢 ONLINE" or "🔴 OFFLINE", true)
-    webhookClient.embed1:addField("World Sekarang", currentWorld, true)
-    webhookClient.embed1:addField("Posisi Tile", tilePos, true)
-    webhookClient.embed1:addField("Gems", gems, true)
-    webhookClient.embed1:addField("Ping", ping, true)
-    webhookClient.embed1:addField("Slot Tas (Isi/Kosong)", string.format("%s (Sisa %s)", slots, emptySlots), true)
-    webhookClient.embed1:addField("Item Pack di Tas", packItemStr, false)
-
-    if webhookClient.message_id and webhookClient.message_id ~= "" then
-        webhookClient:edit()
-    else
-        webhookClient:send()
+sendWebhookNotification = function(msg)
+    local mon = getWebhookMonitor()
+    if mon and type(mon.notify) == "function" then
+        pcall(function() mon.notify(msg) end)
     end
 end
 
@@ -180,10 +236,13 @@ end
 -- SETELAN MODULE BAWAAN LUCIFER (AutoWear / AutoTrash / Collect / Reconnect / Malady)
 -- ========================================================
 local function applyBotSettings()
-    -- Reconnect
+    -- Reconnect & Bypass Logon
     local recon = CONFIG.AUTO_RECONNECT or {}
     bot.auto_reconnect = recon.ENABLED ~= false
     if recon.INTERVAL then bot.reconnect_interval = recon.INTERVAL end
+    if recon.BYPASS_LOGON ~= nil then
+        bot.bypass_logon = recon.BYPASS_LOGON
+    end
 
     -- Collect objek di sekitar (dipakai rotasi saat panen)
     local collect = CONFIG.AUTO_COLLECT or {}
@@ -307,6 +366,7 @@ local function applyRotationSettings()
     end
 
     rotation.enabled = false -- setel dulu dalam keadaan mati, baru dinyalakan
+    if lockoutTriggered then return false end
 
     rotation.auto_rest = false
     rotation.harvest_roots = CONFIG.HARVEST_ROOTS == true
@@ -357,12 +417,13 @@ updateWebhook("Engine Dimulai", "-")
 applyBotSettings()
 registerWorlds()
 
-if not applyRotationSettings() then
-    return
+local okStartup = applyRotationSettings()
+if okStartup and not lockoutTriggered then
+    bot.rotation.enabled = true
+    print("[Engine] Rotasi bawaan Lucifer AKTIF. Panen/tanam/PNB/drop seed/beli pack dijalankan oleh Lucifer.")
+else
+    if bot.rotation then bot.rotation.enabled = false end
 end
-
-bot.rotation.enabled = true
-print("[Engine] Rotasi bawaan Lucifer AKTIF. Panen/tanam/PNB/drop seed/beli pack dijalankan oleh Lucifer.")
 updateWebhook("Rotasi Bawaan Lucifer Aktif", "-")
 
 -- ========================================================
@@ -393,49 +454,154 @@ local function getHospitalModule()
     return hospitalMod
 end
 
+local lastHospitalAttempt = 0
+local HOSPITAL_COOLDOWN = 180 -- Jeda 3 menit sebelum mengulang rute 4AID jika masih sakit
+local hospitalPending = false -- Status pengobatan sedang berjalan/menunggu sembuh
+local shouldResumeAfterCure = false -- Intent apakah rotasi harus dinyalakan kembali pasca sembuh
+local intentionalStop = false
+
 local function checkAndDispatchHospital()
     local mod = getHospitalModule()
-    if not mod or type(mod.checkNeedsHospital) ~= "function" then return false end
+    if not mod then return false end
 
+    -- Evaluasi status penyakit terkini
+    local anySick, curId = false, 0
+    if type(mod.hasAnyMalady) == "function" then
+        anySick, curId = mod.hasAnyMalady(bot)
+    else
+        anySick, curId = mod.checkNeedsHospital(bot)
+    end
+
+    -- Jika bot sudah benar-benar sembuh (anySick == false): bersihkan state pending
+    if anySick == false then
+        if hospitalPending then
+            hospitalPending = false
+            if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
+                bot.rotation.enabled = true
+                shouldResumeAfterCure = false
+                print("[Engine] Malady hilang terverifikasi. Rotasi bawaan dilanjutkan.")
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Jika data penyakit tidak valid / unknown: tahan rotasi dan jangan bersihkan pending
+    if anySick == "unknown" then
+        if hospitalPending and bot.rotation then bot.rotation.enabled = false end
+        return false
+    end
+
+    -- Memeriksa apakah penyakit merupakan target pengobatan ke 4AID (ID 1 / ID 2)
     local needsCure, mid = mod.checkNeedsHospital(bot)
-    if not needsCure then return false end
+    if not needsCure and not hospitalPending then
+        return false
+    end
 
-    print(string.format("[Engine] Terdeteksi Malady ID %d butuh pengobatan! Menjeda rotasi bawaan...", mid))
-    updateWebhook(string.format("Pengobatan Malady ID %d di 4AID", mid), "4AID")
+    local now = os.time and os.time() or 0
+    if hospitalPending and (now - lastHospitalAttempt) < HOSPITAL_COOLDOWN then
+        -- Masih dalam cooldown pengobatan sebelumnya dan belum sembuh: tahan rotasi tetap mati
+        if bot.rotation then bot.rotation.enabled = false end
+        return false
+    end
 
-    -- Jeda rotasi bawaan agar tidak berebut kontrol
-    local wasRotationEnabled = bot.rotation and bot.rotation.enabled == true
+    lastHospitalAttempt = now
+    -- Simpan intent resume saat pertama kali memasuki siklus pengobatan
+    if not hospitalPending then
+        shouldResumeAfterCure = (bot.rotation and bot.rotation.enabled == true)
+    end
+    hospitalPending = true
+
+    print(string.format("[Engine] Terdeteksi Malady ID %s butuh pengobatan! Menjeda rotasi bawaan...", tostring(mid or curId)))
+    if type(updateWebhook) == "function" then
+        updateWebhook(string.format("Pengobatan Malady ID %s di 4AID", tostring(mid or curId)), "4AID")
+    end
+    if type(sendWebhookNotification) == "function" then
+        sendWebhookNotification(string.format("⚠️ **[Malady Alert]** Bot **%s** terkena penyakit (ID: %s)! Menjeda rotasi dan menuju 4AID untuk pengobatan.", tostring(bot.name), tostring(mid or curId)))
+    end
+
     if bot.rotation then
         bot.rotation.enabled = false
     end
 
-    local success = mod.runCure(bot)
+    local status = mod.runCure(bot, updateWebhook)
 
-    -- Resume rotasi bawaan
-    if wasRotationEnabled and bot.rotation then
-        bot.rotation.enabled = true
-        print("[Engine] Pengobatan selesai/dilewati. Rotasi bawaan dilanjutkan.")
+    -- Resume rotasi bawaan HANYA jika bot benar-benar sembuh ("cured") dan online
+    if status == "cured" then
+        hospitalPending = false
+        if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
+            bot.rotation.enabled = true
+            print("[Engine] Pengobatan selesai (sembuh total). Rotasi bawaan dilanjutkan.")
+            if type(sendWebhookNotification) == "function" then
+                sendWebhookNotification(string.format("✅ **[Malady Cured]** Penyakit pada bot **%s** berhasil disembuhkan di 4AID! Rotasi bawaan dilanjutkan.", tostring(bot.name)))
+            end
+            return true
+        end
+    else
+        -- Jika gagal atau belum sembuh, rotasi tetap ditahan mati
+        if bot.rotation then bot.rotation.enabled = false end
+        return false
     end
-
-    return success
 end
 
 local farmLabel = #(CONFIG.FARMS or {}) > 0 and farmWorldName(CONFIG.FARMS[1]) or "-"
+local wasOnline = (bot.status == BotStatus.online)
 
-while waitOnline() do
-    sleep(2000)
+local offlineStartTime = nil
+local offlineAlertSent = false
 
-    -- Cek malady target secara berkala (setiap siklus watchdog)
-    pcall(checkAndDispatchHospital)
+while true do
+    -- Tunggu sampai bot online (penantian berulang tanpa mematikan loop supervisor)
+    local isNowOnline = waitOnline(10)
+    local now = os.time and os.time() or 0
 
-    -- Lucifer mematikan rotasi saat disconnect: nyalakan lagi kalau bot online dan rotasi seharusnya jalan
-    if bot.rotation and bot.rotation.enabled ~= true then
-        bot.rotation.enabled = true
-        print("[Engine] Rotasi bawaan mati (DC/stop). Dinyalakan kembali.")
+    if not isNowOnline then
+        wasOnline = false
+        updateWebhook("Bot Offline — Menunggu Reconnect...")
+        sleep(2000)
+    else
+        sleep(2000)
+
+        local isOnline = (bot.status == BotStatus.online)
+
+        if isOnline then
+            local hadDisconnect = observedOfflineDuringWait or not wasOnline
+            observedOfflineDuringWait = false
+
+            -- Deteksi stop manual: HANYA jika bot terus-menerus online (tanpa ada fase disconnect)
+            -- dan BUKAN karena rotasi sedang dijeda internal oleh modul pengobatan (hospitalPending)
+            if not lockoutTriggered and not hospitalPending and not hadDisconnect and wasOnline and bot.rotation and bot.rotation.enabled == false and not intentionalStop then
+                intentionalStop = true
+                print("[Engine] Rotasi dimatikan secara manual oleh user. Watchdog menghormati perintah stop.")
+            end
+
+            if not intentionalStop and not lockoutTriggered then
+                -- Cek malady target secara berkala (setiap siklus watchdog)
+                local curedOk = false
+                local okDisp, resDisp = pcall(checkAndDispatchHospital)
+                if okDisp and resDisp == true then
+                    curedOk = true
+                end
+
+                -- Baca ulang status online terkini pasca-dispatcher
+                isOnline = (bot.status == BotStatus.online)
+                if not isOnline then
+                    wasOnline = false
+                elseif isOnline then
+                    -- Bot pulih kembali online saat watchdog
+                    if lockoutTriggered then
+                        -- Jika akun dalam status lockout, jangan pernah memulihkan rotasi otomatis
+                        if bot.rotation then bot.rotation.enabled = false end
+                    elseif not intentionalStop and not hospitalPending and hadDisconnect and bot.rotation and bot.rotation.enabled ~= true then
+                        -- Bot reconnect dari DC (bukan dari proses pengobatan yang masih sakit)
+                        bot.rotation.enabled = true
+                        print("[Engine] Bot pulih dari disconnect. Rotasi bawaan dinyalakan kembali.")
+                    end
+                end
+            end
+        end
+
+        wasOnline = isOnline
+        updateWebhook("Rotasi Bawaan Lucifer Berjalan")
     end
-
-    updateWebhook("Rotasi Bawaan Lucifer Berjalan", farmLabel)
 end
-
-updateWebhook("Bot Offline — Rotasi Berhenti", "-")
-print("[Engine] Bot offline. Rotasi berhenti.")

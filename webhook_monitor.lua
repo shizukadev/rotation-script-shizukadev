@@ -1,0 +1,101 @@
+-- Native Lucifer webhook monitor. No network activity until tick()/notify().
+local MALADY_NAMES = {
+    [0] = "Healthy",
+    [1] = "Torn Punching Muscle",
+    [2] = "Gem Cuts",
+    [3] = "Chicken Feet",
+    [4] = "Grumbleteeth",
+    [5] = "Broken Heart",
+    [6] = "Chaos Infection",
+    [7] = "Moldy Guts",
+    [8] = "Brainworms",
+    [9] = "Lupus",
+    [10] = "Ecto-Bones",
+    [11] = "Fatty Liver",
+}
+
+local function maladyLabel(id)
+    return MALADY_NAMES[tonumber(id)] or ("ID " .. tostring(id))
+end
+
+local M = {}
+function M.new(bot, config, api)
+    api = api or _G
+    local cfg = config.WEBHOOK or {}
+    local alert = config.OFFLINE_ALERT or {}
+    local offlineSince, offlineSent, lastMalady, lastDashboard = nil, false, nil, nil
+    local messageId = cfg.MESSAGE_ID
+    local function now() return api.os.time() end
+    local function enabled()
+        return cfg.ENABLED == true and type(cfg.URL) == "string" and cfg.URL ~= ""
+            and not cfg.URL:find("MASUKKAN_URL", 1, true)
+    end
+    local function deliver(content, dashboard)
+        if not enabled() then return false end
+        local ok, err = pcall(function()
+            -- Fresh webhook prevents embed fields accumulating between edits.
+            local hook = api.Webhook.new(cfg.URL)
+            hook.username = "Lucifer Monitor (" .. tostring(bot.name) .. ")"
+            hook.content = content
+            if dashboard and messageId and messageId ~= "" then
+                hook.message_id = tostring(messageId)
+                hook:edit()
+            else
+                hook:send()
+                if dashboard and hook.message_id and hook.message_id ~= "" then
+                    messageId = hook.message_id
+                end
+            end
+        end)
+        if not ok and api.print then api.print("[Webhook] Request failed; delivery unverified.") end
+        return ok -- Invocation only; not a server delivery acknowledgement.
+    end
+    local function currentWorld()
+        local ok, world = pcall(function()
+            if bot:isInWorld() then return bot:getWorld().name end
+        end)
+        return ok and world or "In Transit"
+    end
+    local obj = {}
+    function obj.notify(message) return deliver(tostring(message), false) end
+    function obj.tick(action)
+        local t = now()
+        local online = bot.status == api.BotStatus.online
+        if online then
+            offlineSince, offlineSent = nil, false
+        else
+            offlineSince = offlineSince or t
+            local minutes = tonumber(alert.TIMEOUT_MINUTES) or 5
+            if minutes <= 0 then minutes = 5 end
+            if alert.ENABLED ~= false and not offlineSent and t - offlineSince >= minutes * 60 then
+                local user = tostring(alert.DISCORD_USER_ID or "922775541097066576")
+                if not user:match("^%d+$") then user = "922775541097066576" end
+                offlineSent = deliver(string.format("<@%s> Bot **%s** offline selama %d detik. World saat ini: %s.", user, tostring(bot.name), t-offlineSince, currentWorld()), false)
+            end
+        end
+        -- Unknown/invalid readings never establish recovery; preserve prior state.
+        if online then
+            local id = tonumber(bot.malady)
+            if id and id >= 0 and id % 1 == 0 then
+                if id > 0 and id ~= lastMalady then
+                    if deliver(string.format("Bot **%s** terkena penyakit **%s** (ID %d). World saat ini: %s.", tostring(bot.name), maladyLabel(id), id, currentWorld()), false) then lastMalady = id end
+                elseif id == 0 then
+                    local durationOk, duration = true, 0
+                    if type(bot.getMaladyDuration) == "function" then durationOk, duration = pcall(function() return bot:getMaladyDuration() end) end
+                    if durationOk and type(duration) == "number" and duration == 0 then
+                        if lastMalady and lastMalady > 0 then
+                            if deliver(string.format("Bot **%s**: status penyakit sudah hilang (ID 0). World saat ini: %s.", tostring(bot.name), currentWorld()), false) then lastMalady = 0 end
+                        else lastMalady = 0 end
+                    end
+                end
+            end
+        end
+        local interval = tonumber(cfg.UPDATE_INTERVAL_SECONDS) or 15
+        if not lastDashboard or t-lastDashboard >= math.max(3, interval) then
+            local body = string.format("**Bot:** %s\n**Status:** %s\n**World saat ini:** %s\n**Aktivitas:** %s\n**Gems:** %s", tostring(bot.name), online and "ONLINE" or "OFFLINE", currentWorld(), tostring(action or "-"), tostring(bot.gem_count or 0))
+            if deliver(body, true) then lastDashboard = t end
+        end
+    end
+    return obj
+end
+return M

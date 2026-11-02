@@ -74,6 +74,16 @@ local CONFIG = {
     AUTO_RECONNECT = {
         ENABLED = true,
         INTERVAL = 5,
+        BYPASS_LOGON = true, -- Gunakan bypass logon saat login/reconnect
+        MAX_FAIL_ATTEMPTS = 15, -- Matikan bypass & reconnect jika gagal login > 15x
+        MAX_FAIL_MINUTES = 5, -- Matikan bypass & reconnect jika gagal login > 5 menit
+    },
+
+    -- Pengawasan Offline & Notifikasi Discord
+    OFFLINE_ALERT = {
+        ENABLED = true,
+        TIMEOUT_MINUTES = 5, -- 5-10 menit sebelum ping Discord
+        DISCORD_USER_ID = "922775541097066576", -- User ID yang di-tag jika offline lama
     },
 
     -- AutoMalady: kebal Torn Punching Muscle (Grumbleteeth) / Chicken Feet
