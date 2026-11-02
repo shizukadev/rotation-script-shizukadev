@@ -10,6 +10,21 @@ end
 
 print("[Probe] bot = " .. tostring(bot.name) .. " | status = " .. tostring(bot.status))
 
+-- Angka enum: engine membandingkan bot.status == BotStatus.online.
+-- Tanpa ini kita tidak tahu apakah status 20 berarti online.
+if type(BotStatus) == "table" then
+    local names = {}
+    for k, v in pairs(BotStatus) do names[#names + 1] = tostring(k) .. "=" .. tostring(v) end
+    table.sort(names)
+    print("[Probe] BotStatus: " .. table.concat(names, " "))
+else
+    print("[Probe] BotStatus type = " .. type(BotStatus))
+end
+
+-- Apakah bot benar-benar sudah masuk world?
+pcall(function() print("[Probe] isInWorld = " .. tostring(bot:isInWorld())) end)
+pcall(function() local w = bot:getWorld() print("[Probe] world = " .. tostring(w and w.name)) end)
+
 local r = bot.rotation
 print("[Probe] type(bot.rotation) = " .. type(r))
 if not r then
