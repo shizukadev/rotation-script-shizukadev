@@ -86,7 +86,8 @@ local CONFIG = {
         DISCORD_USER_ID = "922775541097066576", -- User ID yang di-tag jika offline lama
     },
 
-    -- AutoMalady: kebal Torn Punching Muscle (Grumbleteeth) / Chicken Feet
+    -- AutoMalady native: Grumbleteeth (ID 4) / Chicken Feet (ID 3).
+    -- Torn Punching Muscle (ID 1) / Gem Cuts (ID 2) ditangani rute custom 4AID.
     MALADY = {
         GRUMBLETEETH = true,
         CHICKEN_FEET = true,

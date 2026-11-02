@@ -69,18 +69,22 @@ local function waitOnline(timeout)
         if not lockoutTriggered and curStatus ~= BotStatus.online then
             if not loginFailStartTime then loginFailStartTime = now end
 
-            local isTerminalFailure = false
-            if BotStatus and (
-                curStatus == BotStatus.logon_fail or
-                curStatus == BotStatus.error_connecting or
-                curStatus == BotStatus.too_many_login or
-                curStatus == BotStatus.server_overload or
-                curStatus == BotStatus.http_block
-            ) then
-                if curStatus ~= lastObservedStatus then
-                    isTerminalFailure = true
-                end
+            -- Only an observed new server-data phase arms a new attempt.
+            -- Error-to-error changes and offline polling never count as attempts.
+            if BotStatus.getting_server_data ~= nil and curStatus == BotStatus.getting_server_data
+                and curStatus ~= lastObservedStatus then
+                inLoginAttempt = true
             end
+            local isTerminalFailure = inLoginAttempt and (
+                (BotStatus.logon_fail ~= nil and curStatus == BotStatus.logon_fail) or
+                (BotStatus.error_connecting ~= nil and curStatus == BotStatus.error_connecting) or
+                (BotStatus.too_many_login ~= nil and curStatus == BotStatus.too_many_login) or
+                (BotStatus.server_overload ~= nil and curStatus == BotStatus.server_overload) or
+                (BotStatus.http_block ~= nil and curStatus == BotStatus.http_block)
+            )
+            if isTerminalFailure then inLoginAttempt = false end
+            -- Native retries whose start/result is not sampled are uncounted;
+            -- the independent duration limit remains the fallback.
 
             if isTerminalFailure then
                 loginFailCount = loginFailCount + 1
@@ -111,9 +115,8 @@ local function waitOnline(timeout)
                 if bot.rotation then bot.rotation.enabled = false end
             end
         end
-        end
 
-        lastObservedStatus = curStatus
+        lastObservedStatus = curStatus -- latest sample release
 
         if bot.status == BotStatus.online then return true end
         observedOfflineDuringWait = true
@@ -430,8 +433,12 @@ updateWebhook("Rotasi Bawaan Lucifer Aktif", "-")
 -- AUTO MALADY 4AID DISPATCHER (TORN MUSCLE / GEM CUTS)
 -- ========================================================
 local hospitalMod = nil
+local hospitalLoadAttempt = nil
 local function getHospitalModule()
+    local now = os.time()
+    if hospitalMod == nil and hospitalLoadAttempt and now - hospitalLoadAttempt < 30 then return nil end
     if hospitalMod == nil then
+        hospitalLoadAttempt = now
         local ok, mod = pcall(require, "auto_malady_4aid")
         if ok and type(mod) == "table" and type(mod.runCure) == "function" then
             hospitalMod = mod
@@ -449,6 +456,27 @@ local function getHospitalModule()
                     end
                 end
             end
+        end
+    end
+    if not hospitalMod then
+        -- Loader users may not have companion files in the host working directory.
+        local ok, res = pcall(function()
+            local client = HttpClient.new()
+            client.url = "https://raw.githubusercontent.com/shizukadev/rotation-script-shizukadev/main/auto_malady_4aid.lua"
+            client:setMethod(Method.get)
+            client.timeout = 15
+            return client:request()
+        end)
+        if ok and res and res.error == 0 and res.status == 200 then
+            local chunk = (loadstring or load)(res.body, "@auto_malady_4aid.lua")
+            if chunk then
+                local loaded, mod = pcall(chunk, "module")
+                if loaded and type(mod) == "table" and type(mod.runCure) == "function"
+                    and type(mod.checkNeedsHospital) == "function" then hospitalMod = mod end
+            end
+        end
+        if not hospitalMod then
+            print("[Hospital] Modul auto_malady_4aid tidak tersedia. Periksa file lokal atau unduhan GitHub; retry 30 detik.")
         end
     end
     return hospitalMod
@@ -579,6 +607,9 @@ while true do
                 -- Cek malady target secara berkala (setiap siklus watchdog)
                 local curedOk = false
                 local okDisp, resDisp = pcall(checkAndDispatchHospital)
+                if not okDisp then
+                    print("[Hospital] Dispatcher gagal; periksa modul/API malady. Rotasi tidak dipulihkan oleh jalur ini.")
+                end
                 if okDisp and resDisp == true then
                     curedOk = true
                 end
