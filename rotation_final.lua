@@ -96,6 +96,7 @@ bot.leave_world_before_warp = false
 local rotationEnableError = nil
 -- True hanya setelah host benar-benar melaporkan rotation.enabled == true.
 local rotationConfirmedOn = false
+local rotationDiagPrinted = false
 local function setRotationEnabled(on)
     if not bot.rotation then return false end
     local ok, err = pcall(function() bot.rotation.enabled = on end)
@@ -537,6 +538,18 @@ local function applyRotationSettings()
     setRotationField(rotation, "visit_random_worlds", false)
     setRotationField(rotation, "custom_position", 0)
 
+    -- Resep aktivasi terdokumentasi: rotasi butuh item target (id) dan batas world.
+    local blockId = tonumber(CONFIG.BLOCK_ID) or tonumber(CONFIG.SEED_ID)
+    if blockId then
+        setRotationField(rotation, "id", blockId)
+    else
+        print("[Setup] Peringatan: CONFIG.BLOCK_ID kosong; rotasi butuh ID item target.")
+    end
+    setRotationField(rotation, "world_limit", #(resolveFarmList() or {}))
+    if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.PricePack then
+        setRotationField(rotation, "gem_limit", CONFIG.AUTO_BUY_PACK.PricePack)
+    end
+
     -- v2.86: interval lewat bot:setInterval(Action.*), bukan field rotation.*
     if type(Action) == "table" and type(bot.setInterval) == "function" then
         for _, pair in ipairs(ACTION_DELAYS) do
@@ -613,6 +626,11 @@ if okStartup and not lockoutTriggered then
     end
     if bot.rotation and bot.rotation.enabled ~= true then
         print("[Rotation Final] Rotasi belum aktif (bot mungkin belum login). Watchdog akan menyalakannya setelah online.")
+        pcall(function()
+            print(string.format("[Rotation Final] Status rotasi: enabled=%s status=%s id=%s world_limit=%s",
+                tostring(bot.rotation.enabled), tostring(bot.rotation.status),
+                tostring(bot.rotation.id), tostring(bot.rotation.world_limit)))
+        end)
     end
 else
     if bot.rotation then setRotationEnabled(false) end
@@ -794,6 +812,13 @@ while true do
                 if setRotationEnabled(true) and bot.rotation.enabled == true then
                     rotationConfirmedOn = true
                     print("[Rotation Final] Rotasi terkonfirmasi AKTIF setelah bot online.")
+                elseif not rotationDiagPrinted then
+                    rotationDiagPrinted = true
+                    pcall(function()
+                        print(string.format("[Rotation Final] Rotasi tetap OFF walau sudah dinyalakan: enabled=%s status=%s id=%s world_limit=%s",
+                            tostring(bot.rotation.enabled), tostring(bot.rotation.status),
+                            tostring(bot.rotation.id), tostring(bot.rotation.world_limit)))
+                    end)
                 end
             end
 

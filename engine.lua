@@ -31,6 +31,7 @@ local rotationEnableError = nil
 -- dulu bacaan `enabled == false` berikutnya disalahartikan sebagai stop manual
 -- dan rotasi tidak pernah dinyalakan lagi.
 local rotationConfirmedOn = false
+local rotationDiagPrinted = false
 local function setRotationEnabled(on)
     if not bot.rotation then return false end
     local ok, err = pcall(function() bot.rotation.enabled = on end)
@@ -506,6 +507,23 @@ local function applyRotationSettings()
     setRotationField(rotation, "visit_random_worlds", false)
     setRotationField(rotation, "custom_position", 0) -- pakai tile default, bukan custom break tile
 
+    -- Resep aktivasi yang didokumentasikan: rotasi butuh item target (id) dan
+    -- batas world sebelum bisa dinyalakan. Tanpa `id`, toggle enabled tidak
+    -- menghasilkan rotasi yang berjalan.
+    local blockId = tonumber(CONFIG.BLOCK_ID) or tonumber(CONFIG.SEED_ID)
+    if blockId then
+        setRotationField(rotation, "id", blockId)
+    else
+        print("[Setup] Peringatan: CONFIG.BLOCK_ID kosong; rotasi butuh ID item target.")
+    end
+    setRotationField(rotation, "world_limit", #(resolveFarmList() or {}))
+    if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.PricePack then
+        setRotationField(rotation, "gem_limit", CONFIG.AUTO_BUY_PACK.PricePack)
+    end
+    if CONFIG.AUTO_BUY_PACK and CONFIG.AUTO_BUY_PACK.PACK_INDEX then
+        setRotationField(rotation, "pack", CONFIG.AUTO_BUY_PACK.PACK_INDEX)
+    end
+
     -- v2.86: interval adalah API bot:setInterval(Action.*), bukan field
     -- rotation.harvest_interval/plant_interval/break_interval. Field lama
     -- ditolak build host dan dulu ikut menggagalkan seluruh setup.
@@ -591,6 +609,12 @@ if okStartup and not lockoutTriggered then
     end
     if bot.rotation and bot.rotation.enabled ~= true then
         print("[Engine] Rotasi belum aktif (bot mungkin belum login). Watchdog akan menyalakannya setelah online.")
+        -- Diagnostik: nilai apa adanya dari host, supaya tidak perlu menebak lagi.
+        pcall(function()
+            print(string.format("[Engine] Status rotasi: enabled=%s status=%s id=%s world_limit=%s",
+                tostring(bot.rotation.enabled), tostring(bot.rotation.status),
+                tostring(bot.rotation.id), tostring(bot.rotation.world_limit)))
+        end)
     end
 else
     if bot.rotation then setRotationEnabled(false) end
@@ -791,6 +815,13 @@ while true do
                 if setRotationEnabled(true) and bot.rotation.enabled == true then
                     rotationConfirmedOn = true
                     print("[Engine] Rotasi terkonfirmasi AKTIF setelah bot online.")
+                elseif not rotationDiagPrinted then
+                    rotationDiagPrinted = true
+                    pcall(function()
+                        print(string.format("[Engine] Rotasi tetap OFF walau sudah dinyalakan: enabled=%s status=%s id=%s world_limit=%s",
+                            tostring(bot.rotation.enabled), tostring(bot.rotation.status),
+                            tostring(bot.rotation.id), tostring(bot.rotation.world_limit)))
+                    end)
                 end
             end
 
