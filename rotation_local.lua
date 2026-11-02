@@ -573,7 +573,11 @@ if not bot then
     return
 end
 
-bot.leave_world_before_warp = false -- Langsung warp antar-world tanpa exit terlebih dahulu
+bot.leave_world_before_warp = false
+
+-- Penanda build: muncul di log supaya ketahuan kalau yang jalan versi lama.
+ENGINE_BUILD = "2026-11-02-r8"
+ -- Langsung warp antar-world tanpa exit terlebih dahulu
 
 -- Satu-satunya jalur menyalakan/mematikan rotasi.
 -- Host bisa melempar error saat `enabled` diubah (mis. farm belum ter-assign);
@@ -1152,7 +1156,7 @@ local function dumpRotationDiagnostics()
         print(string.format("[Diag] enabled=%s status=%s", tostring(r and r.enabled), tostring(r and r.status)))
     end)
 end
-print("[Engine] Memulai driver rotasi Lucifer v2.86...")
+print("[Engine] Memulai driver rotasi Lucifer v2.86... (build " .. ENGINE_BUILD .. ")")
 updateWebhook("Engine Dimulai", "-")
 
 local function startupStage(name, fn)

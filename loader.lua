@@ -120,7 +120,7 @@ local CONFIG = {
 -- ========================================================
 local RAW_ENGINE_URL = "https://raw.githubusercontent.com/shizukadev/rotation-script-shizukadev/main/engine.lua"
 
-print("[Loader] Mengunduh engine rotasi dari GitHub...")
+print("[Loader] Mengunduh engine rotasi dari: " .. RAW_ENGINE_URL)
 
 local client = HttpClient.new()
 client.url = RAW_ENGINE_URL
