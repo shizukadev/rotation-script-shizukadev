@@ -38,10 +38,17 @@ local CONFIG = {
     -- Panen akar pohon saat panen (opsional, default false)
     HARVEST_ROOTS = false,
 
-    -- Interval Aksi Bot (Detik) -> diteruskan ke rotasi bawaan Lucifer
+    -- Interval Aksi Bot dalam MILIDETIK (dikonversi ke detik untuk setInterval)
     ACTION_INTERVALS = {
-        hit = 0.18,
-        place = 0.16,
+        moveDelay    = 110,
+        hitDelay     = 160,
+        placeDelay   = 115,
+        harvestDelay = 150,
+        plantDelay   = 140,
+        warpDelay    = 7000,
+        dropDelay    = 4000,
+        trashDelay   = 4000,
+        dynamicDelay = true,   -- false = pakai delay tetap, bukan dinamis
     },
 
     -- PNB (place & break blok) dijalankan fitur bawaan Lucifer: rotation.pnb_in_home
@@ -591,9 +598,26 @@ local function setRotationEnabled(on)
 end
 
 
+-- Interval aksi: satu tabel, satuan milidetik (setInterval memakai detik).
+-- Nilai lama `hit`/`place` (detik) tetap diterima supaya config lama tidak pecah.
 local intervals = CONFIG.ACTION_INTERVALS or {}
-local hitInterval = intervals.hit or 0.18
-local placeInterval = intervals.place or 0.16
+local function intervalSeconds(ms, defaultMs)
+    local v = tonumber(ms)
+    if not v or v <= 0 then v = defaultMs end
+    return v / 1000
+end
+local hitInterval = intervals.hit or intervalSeconds(intervals.hitDelay, 160)
+local placeInterval = intervals.place or intervalSeconds(intervals.placeDelay, 115)
+local ACTION_DELAYS = {
+    { "move", intervalSeconds(intervals.moveDelay, 110) },
+    { "hit", hitInterval },
+    { "place", placeInterval },
+    { "harvest", intervalSeconds(intervals.harvestDelay, 150) },
+    { "plant", intervalSeconds(intervals.plantDelay, 140) },
+    { "warp", intervalSeconds(intervals.warpDelay, 7000) },
+    { "drop", intervalSeconds(intervals.dropDelay, 4000) },
+    { "trash", intervalSeconds(intervals.trashDelay, 4000) },
+}
 
 -- ========================================================
 -- HELPER
@@ -1026,20 +1050,15 @@ local function applyRotationSettings()
 
     setRotationField(rotation, "auto_rest", false)
     setRotationField(rotation, "harvest_roots", CONFIG.HARVEST_ROOTS == true)
-    setRotationField(rotation, "dynamic_delay", true)
+    setRotationField(rotation, "dynamic_delay", intervals.dynamicDelay ~= false)
     setRotationField(rotation, "visit_random_worlds", false)
     setRotationField(rotation, "custom_position", 0) -- pakai tile default, bukan custom break tile
 
     -- v2.86: interval adalah API bot:setInterval(Action.*), bukan field
     -- rotation.harvest_interval/plant_interval/break_interval. Field lama
     -- ditolak build host dan dulu ikut menggagalkan seluruh setup.
-    local actionIntervals = {
-        { "hit", hitInterval }, { "place", placeInterval },
-        { "harvest", hitInterval }, { "plant", placeInterval },
-        { "break", placeInterval }, { "drop", placeInterval },
-    }
     if type(Action) == "table" and type(bot.setInterval) == "function" then
-        for _, pair in ipairs(actionIntervals) do
+        for _, pair in ipairs(ACTION_DELAYS) do
             local key, seconds = pair[1], pair[2]
             if Action[key] ~= nil then
                 local ok = pcall(function() bot:setInterval(Action[key], seconds) end)

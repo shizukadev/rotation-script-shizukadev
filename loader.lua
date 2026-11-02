@@ -37,10 +37,17 @@ local CONFIG = {
     -- Panen akar pohon saat panen (opsional, default false)
     HARVEST_ROOTS = false,
 
-    -- Interval Aksi Bot (Detik) -> diteruskan ke rotasi bawaan Lucifer
+    -- Interval Aksi Bot dalam MILIDETIK (dikonversi ke detik untuk setInterval)
     ACTION_INTERVALS = {
-        hit = 0.18,
-        place = 0.16,
+        moveDelay    = 110,
+        hitDelay     = 160,
+        placeDelay   = 115,
+        harvestDelay = 150,
+        plantDelay   = 140,
+        warpDelay    = 7000,
+        dropDelay    = 4000,
+        trashDelay   = 4000,
+        dynamicDelay = true,   -- false = pakai delay tetap, bukan dinamis
     },
 
     -- PNB (place & break blok) dijalankan fitur bawaan Lucifer: rotation.pnb_in_home
