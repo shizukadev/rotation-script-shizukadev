@@ -326,7 +326,7 @@ local function getWebhookMonitor()
             end
         end
         if mod and type(mod.new) == "function" then
-            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, Webhook = Webhook, print = print })
+            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, RotationStatus = RotationStatus, Webhook = Webhook, print = print })
         end
     end
     return webhookMonitor

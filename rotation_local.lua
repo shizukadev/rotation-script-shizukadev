@@ -497,6 +497,19 @@ function M.new(bot, config, api)
         end)
         return ok and world or "In Transit"
     end
+    -- Fase rotasi memakai enum RotationStatus bila host menyediakannya.
+    local function rotationPhase()
+        local okR, rot = pcall(function() return bot.rotation end)
+        if not okR or not rot then return nil end
+        local okS, status = pcall(function() return rot.status end)
+        if not okS or status == nil then return nil end
+        if type(api.RotationStatus) == "table" then
+            for name, value in pairs(api.RotationStatus) do
+                if value == status then return tostring(name) end
+            end
+        end
+        return tostring(status)
+    end
     local lastDiseaseCheck = nil
     local obj = {}
     function obj.notify(message) return deliver(tostring(message), false) end
@@ -536,7 +549,11 @@ function M.new(bot, config, api)
         end
         local interval = tonumber(cfg.UPDATE_INTERVAL_SECONDS) or 15
         if not lastDashboard or t-lastDashboard >= math.max(3, interval) then
-            local body = string.format("**Bot:** %s\n**Status:** %s\n**World saat ini:** %s\n**Aktivitas:** %s\n**Gems:** %s", tostring(bot.name), online and "ONLINE" or "OFFLINE", currentWorld(), tostring(action or "-"), tostring(bot.gem_count or 0))
+            local rotOn = false
+            pcall(function() rotOn = (bot.rotation and bot.rotation.enabled == true) end)
+            local phase = rotationPhase()
+            local rotText = rotOn and ("ON " .. tostring(phase or "-")) or "OFF"
+            local body = string.format("**Bot:** %s\n**Status:** %s\n**World saat ini:** %s\n**Rotasi:** %s\n**Aktivitas:** %s\n**Gems:** %s", tostring(bot.name), online and "ONLINE" or "OFFLINE", currentWorld(), rotText, tostring(action or "-"), tostring(bot.gem_count or 0))
             if deliver(body, true) then lastDashboard = t end
         end
     end
@@ -880,7 +897,7 @@ local function getWebhookMonitor()
             end
         end
         if mod and type(mod.new) == "function" then
-            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, Webhook = Webhook, print = print })
+            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, RotationStatus = RotationStatus, Webhook = Webhook, print = print })
         end
     end
     return webhookMonitor
