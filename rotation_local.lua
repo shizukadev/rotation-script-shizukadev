@@ -1025,10 +1025,13 @@ end
 -- Satu field rotasi yang tidak dikenal build host dulu melempar error dan
 -- membatalkan SELURUH pengaturan rotasi, sehingga rotasi tidak pernah menyala.
 -- Sekarang tiap field berdiri sendiri: yang gagal dilewati, namanya dicatat.
+-- Field yang tidak ada di build host dilewati diam-diam (bukan error: banyak
+-- nama field hanya ada di v1.8). Yang ada tapi menolak tulisan baru dilaporkan.
 local rotationFieldFailures = {}
 local function setRotationField(rotation, key, value)
+    local existed = rotation[key] ~= nil
     local ok = pcall(function() rotation[key] = value end)
-    if not ok then
+    if not ok and existed then
         rotationFieldFailures[#rotationFieldFailures + 1] = key
     end
     return ok
@@ -1050,7 +1053,12 @@ local function applyRotationSettings()
 
     setRotationField(rotation, "auto_rest", false)
     setRotationField(rotation, "harvest_roots", CONFIG.HARVEST_ROOTS == true)
-    setRotationField(rotation, "dynamic_delay", intervals.dynamicDelay ~= false)
+    -- v2.86: dynamic_delay adalah properti bot, bukan rotation (itu legacy v1.8
+    -- yang ditolak build host).
+    local dynamicDelay = intervals.dynamicDelay ~= false
+    if not pcall(function() bot.dynamic_delay = dynamicDelay end) then
+        setRotationField(rotation, "dynamic_delay", dynamicDelay)
+    end
     setRotationField(rotation, "visit_random_worlds", false)
     setRotationField(rotation, "custom_position", 0) -- pakai tile default, bukan custom break tile
 
