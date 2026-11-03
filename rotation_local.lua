@@ -521,17 +521,21 @@ function M.new(bot, config, api)
             and "Lucifer Global Monitor"
             or ("Lucifer Monitor (" .. tostring(bot.name) .. ")")
 
+        local editSuccess = true
         local ok = pcall(function()
             local hook = api.Webhook.new(cfg.URL)
             hook.username = hookUser
             hook.content = tostring(content)
             if usedEdit then
                 hook.message_id = id
-                local okEdit = pcall(function() hook:edit() end)
-                if not okEdit then
-                    okEdit = pcall(function() hook:edit(id) end)
+                local okEdit, resEdit = pcall(function() return hook:edit() end)
+                if not okEdit or resEdit == false then
+                    okEdit, resEdit = pcall(function() return hook:edit(id) end)
                 end
-                if not okEdit then error("Webhook:edit failed") end
+                if not okEdit or resEdit == false then
+                    editSuccess = false
+                    error("Webhook:edit failed")
+                end
             else
                 hook:send()
                 if dashboard and hook.message_id and tostring(hook.message_id) ~= "" then
@@ -540,7 +544,7 @@ function M.new(bot, config, api)
             end
         end)
 
-        if ok then
+        if ok and editSuccess then
             if dashboard then lastBody = content end
             return true
         else
@@ -584,6 +588,27 @@ function M.new(bot, config, api)
 
     local function isLeader(myBot, allBots)
         local onlineStatus = (api.BotStatus and api.BotStatus.online) or 1
+        -- Leader ditentukan dari pengirim yang aktif (menjalankan monitor)
+        -- Jika pengirim eksplisit diatur di config, hormati itu
+        if cfg.LEADER_BOT and tostring(cfg.LEADER_BOT) ~= "" then
+            return myBot.name == cfg.LEADER_BOT
+        end
+        -- Default: bot ini adalah pengirim dashboard untuk instance ini
+        -- Jika allBots terdeteksi, hanya bot pertama yang memiliki status online
+        -- DAN terdaftar aktif pada environment yang menjalankan peran leader
+        local activeParticipants = api._ACTIVE_MONITOR_BOTS or _G._ACTIVE_MONITOR_BOTS
+        if type(activeParticipants) == "table" and next(activeParticipants) ~= nil then
+            for _, b in ipairs(allBots) do
+                if b.status == onlineStatus and activeParticipants[b.name] then
+                    return b.name == myBot.name
+                end
+            end
+            for _, b in ipairs(allBots) do
+                if activeParticipants[b.name] then
+                    return b.name == myBot.name
+                end
+            end
+        end
         for _, b in ipairs(allBots) do
             if b.status == onlineStatus then
                 return b.name == myBot.name
@@ -627,6 +652,19 @@ function M.new(bot, config, api)
 
     local lastDiseaseCheck = nil
     local obj = {}
+    -- Registrasi bot ini sebagai peserta aktif monitor
+    pcall(function()
+        local part = api._ACTIVE_MONITOR_BOTS or _G._ACTIVE_MONITOR_BOTS
+        if not part then
+            part = {}
+            if api._ACTIVE_MONITOR_BOTS ~= nil or type(api) == "table" then
+                api._ACTIVE_MONITOR_BOTS = part
+            else
+                _G._ACTIVE_MONITOR_BOTS = part
+            end
+        end
+        part[bot.name] = true
+    end)
     function obj.notify(message) return deliver(tostring(message), false) end
     function obj.tick(action)
         local t = now()
