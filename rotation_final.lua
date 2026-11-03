@@ -28,8 +28,15 @@ local CONFIG = {
     HARVEST_ROOTS = false,
 
     ACTION_INTERVALS = {
-        hit = 0.18,
-        place = 0.16,
+        moveDelay    = 115,
+        hitDelay     = 160,
+        placeDelay   = 110,
+        harvestDelay = 160,
+        plantDelay   = 110,
+        warpDelay    = 7000,
+        dropDelay    = 3500,
+        trashDelay   = 3500,
+        dynamicDelay = true,
     },
 
     PNB = {
@@ -73,15 +80,20 @@ local CONFIG = {
 
     WEBHOOK = {
         ENABLED = true,
-        URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA",
-        MESSAGE_ID = "",
+        URL = "https://discord.com/api/webhooks/1565669831909580800/hHfE2snm8n9mRknmLdyGOeqsJqLeFdyE4SYvGYA7yMFrtD5qz93xWBHnN3MOwKGdupLw",
+        MESSAGE_ID = "1567025865047539856",
+        UPDATE_INTERVAL_SECONDS = 15,
+        EVENT_NOTIFICATIONS = true,
+        MIN_EDIT_SECONDS = 5,
+        PHASE_NOTIFY = false,
+        GLOBAL = true,
     },
 
     AUTO_BUY_PACK = {
         ENABLED = true,
-        PackName = "world_lock_10_pack",
-        PricePack = 20000,
-        ItemIDOfPack = { 242 },
+        PackName = "vending_machine",
+        PricePack = 8000,
+        ItemIDOfPack = { 2978 },
     },
 }
 

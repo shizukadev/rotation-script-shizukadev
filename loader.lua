@@ -38,17 +38,17 @@ local CONFIG = {
     -- Panen akar pohon saat panen (opsional, default false)
     HARVEST_ROOTS = false,
 
-    -- Interval Aksi Bot dalam MILIDETIK (dikonversi ke detik untuk setInterval)
+    -- Interval Aksi Bot dalam MILIDETIK (disesuaikan untuk RDP Ping 50-100 ms)
     ACTION_INTERVALS = {
-        moveDelay    = 110,
-        hitDelay     = 160,
-        placeDelay   = 115,
-        harvestDelay = 150,
-        plantDelay   = 140,
-        warpDelay    = 7000,
-        dropDelay    = 4000,
-        trashDelay   = 4000,
-        dynamicDelay = true,   -- false = pakai delay tetap, bukan dinamis
+        moveDelay    = 115, -- 115ms: pergerakan lincah tanpa desync di ping 50-100
+        hitDelay     = 160, -- 160ms: break / hit blok sesuai permintaan
+        placeDelay   = 110, -- 110ms: place blok sesuai permintaan
+        harvestDelay = 160, -- 160ms: panen pohon (hit) selaras dengan break
+        plantDelay   = 110, -- 110ms: tanam pohon (place) selaras dengan place
+        warpDelay    = 7000, -- 7s: cooldown warp world aman dari subserver lockout
+        dropDelay    = 3500, -- 3.5s: jeda dialog & drop barang di storage
+        trashDelay   = 3500, -- 3.5s: jeda dialog & trash barang
+        dynamicDelay = true, -- true: Lucifer dynamic delay kompensasi jitter ping 50-100 ms
     },
 
     -- PNB (place & break blok) dijalankan fitur bawaan Lucifer: rotation.pnb_in_home
@@ -103,20 +103,22 @@ local CONFIG = {
     -- Webhook Live Monitor (webhook_edit)
     WEBHOOK = {
         ENABLED = true,
-        URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA",
-        MESSAGE_ID = "", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
+        URL = "https://discord.com/api/webhooks/1565669831909580800/hHfE2snm8n9mRknmLdyGOeqsJqLeFdyE4SYvGYA7yMFrtD5qz93xWBHnN3MOwKGdupLw",
+        MESSAGE_ID = "1567025865047539856", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
         UPDATE_INTERVAL_SECONDS = 15, -- jeda refresh dashboard
+        EVENT_NOTIFICATIONS = true, -- live dashboard only; true mengaktifkan pesan alert terpisah
+        MIN_EDIT_SECONDS = 5, -- gabungkan perubahan cepat ke edit berikutnya
         PHASE_NOTIFY = false, -- true = kirim pesan tiap fase rotasi berubah (bisa ramai)
-        GLOBAL = false, -- true = satu dashboard global terpadu untuk semua bot jika beberapa/semua bot dijalankan bersamaan
+        GLOBAL = true, -- true = satu dashboard global terpadu untuk semua bot jika beberapa/semua bot dijalankan bersamaan
     },
 
     -- Beli pack otomatis: rotasi Lucifer beli PackName saat gems mencapai PricePack,
     -- lalu drop hasilnya ke STORAGE (doorpack) lewat WorldManager.
     AUTO_BUY_PACK = {
         ENABLED = true,
-        PackName = "world_lock_10_pack",
-        PricePack = 20000,
-        ItemIDOfPack = { 242 }, -- Hanya untuk tampilan jumlah pack di webhook
+        PackName = "vending_machine",
+        PricePack = 8000,
+        ItemIDOfPack = { 2978 },
     },
 }
 

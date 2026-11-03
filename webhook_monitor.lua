@@ -27,68 +27,86 @@ function M.new(bot, config, api)
     local dashLogged = false
     local lastPhase = nil
     local messageId = cfg.MESSAGE_ID
+    local lastRequest, lastBody = nil, nil
+    local retryAfter = 0
+
     local function now() return api.os.time() end
     local function enabled()
         return cfg.ENABLED == true and type(cfg.URL) == "string" and cfg.URL ~= ""
             and not cfg.URL:find("MASUKKAN_URL", 1, true)
     end
+
     local function deliver(content, dashboard)
         if not enabled() then return false end
-        local usedEdit = dashboard and messageId and messageId ~= ""
+        if not dashboard and cfg.EVENT_NOTIFICATIONS == false then return true end
+
+        local t = now()
+        if t < retryAfter then return false end
+
+        if dashboard then
+            if content == lastBody then return true end
+            local minEdit = tonumber(cfg.MIN_EDIT_SECONDS) or 5
+            if lastRequest and (t - lastRequest) < minEdit then return false end
+            lastRequest = t
+        end
+
+        local id = messageId and tostring(messageId) or ""
+        local usedEdit = dashboard and id ~= ""
+
         local hookUser = (dashboard and (cfg.GLOBAL == true or cfg.ALL_BOTS == true))
             and "Lucifer Global Monitor"
             or ("Lucifer Monitor (" .. tostring(bot.name) .. ")")
+
         local ok = pcall(function()
-            -- Fresh webhook prevents embed fields accumulating between edits.
             local hook = api.Webhook.new(cfg.URL)
             hook.username = hookUser
-            hook.content = content
+            hook.content = tostring(content)
             if usedEdit then
-                hook.message_id = tostring(messageId)
-                hook:edit()
+                hook.message_id = id
+                local okEdit = pcall(function() hook:edit() end)
+                if not okEdit then
+                    okEdit = pcall(function() hook:edit(id) end)
+                end
+                if not okEdit then error("Webhook:edit failed") end
             else
                 hook:send()
                 if dashboard and hook.message_id and tostring(hook.message_id) ~= "" then
-                    messageId = hook.message_id
+                    messageId = tostring(hook.message_id)
                 end
             end
         end)
-        if ok then return true end
 
-        -- Edit gagal (id basi, pesan dihapus, atau channel lain): dashboard
-        -- jangan diam selamanya. Buang id lama lalu kirim pesan baru.
-        if usedEdit then
-            if api.print then api.print("[Webhook] Edit dashboard gagal; mengirim pesan baru.") end
-            messageId = nil
-            local okSend = pcall(function()
-                local hook = api.Webhook.new(cfg.URL)
-                hook.username = hookUser
-                hook.content = content
-                hook:send()
-                if hook.message_id and tostring(hook.message_id) ~= "" then
-                    messageId = hook.message_id
-                end
-            end)
-            if okSend then return true end
+        if ok then
+            if dashboard then lastBody = content end
+            return true
+        else
+            retryAfter = now() + 15
+            if api.print then api.print("[Webhook] Request failed; delivery unverified.") end
+            return false
         end
-        if api.print then api.print("[Webhook] Request failed; delivery unverified.") end
-        return false -- Invocation only; not a server delivery acknowledgement.
     end
+
     local function currentWorld(targetBot)
         local b = targetBot or bot
         local ok, world = pcall(function()
-            if b:isInWorld() then return b:getWorld().name end
+            if b == bot then
+                if bot:isInWorld() then return bot:getWorld().name end
+            else
+                if type(b.isInWorld) == "function" and b:isInWorld() then
+                    local w = b:getWorld()
+                    if w and type(w.name) == "string" then return w.name end
+                end
+            end
         end)
-        return ok and world or "In Transit"
+        return (ok and world and world ~= "") and world or "In Transit"
     end
-    -- Status rotasi: OFF hanya kalau host benar-benar melaporkan enabled=false.
-    -- Tidak terbaca = UNKNOWN, jangan disamakan dengan mati.
+
     local function rotationState(targetBot)
         local b = targetBot or bot
         local okR, rot = pcall(function() return b.rotation end)
         if not okR or not rot then return "UNKNOWN" end
         local okE, enabled = pcall(function() return rot.enabled end)
-        if not okE or enabled == nil then return "UNKNOWN" end
+        if not okE or type(enabled) ~= "boolean" then return "UNKNOWN" end
         if enabled ~= true then return "OFF" end
         local okS, status = pcall(function() return rot.status end)
         if not okS or status == nil then return "ON UNKNOWN" end
@@ -117,7 +135,7 @@ function M.new(bot, config, api)
         local totalGems = 0
         local lines = {}
         for i, b in ipairs(allBots) do
-            local isOnline = b.status == onlineStatus
+            local isOnline = (b.status == onlineStatus)
             if isOnline then onlineCount = onlineCount + 1 end
             local gems = tonumber(b.gem_count) or 0
             totalGems = totalGems + gems
@@ -125,7 +143,8 @@ function M.new(bot, config, api)
             local rot = rotationState(b)
             local statusLabel = isOnline and "ONLINE" or "OFFLINE"
             local maladyBadge = ""
-            local mid = tonumber(b.malady)
+            local okMid, mid = pcall(function() if isOnline then return tonumber(b.malady) end end)
+            if not okMid then mid = nil end
             if mid and mid > 0 then
                 maladyBadge = " | ⚠️ " .. maladyLabel(mid)
             end
@@ -141,6 +160,7 @@ function M.new(bot, config, api)
         end
         return body
     end
+
     local lastDiseaseCheck = nil
     local obj = {}
     function obj.notify(message) return deliver(tostring(message), false) end
@@ -159,7 +179,7 @@ function M.new(bot, config, api)
                 offlineSent = deliver(string.format("<@%s> Bot **%s** offline selama %d detik. World saat ini: %s.", user, tostring(bot.name), t-offlineSince, currentWorld()), false)
             end
         end
-        -- Unknown/invalid readings never establish recovery; preserve prior state.
+
         if not online then lastDiseaseCheck = nil end
         if online and (not lastDiseaseCheck or t - lastDiseaseCheck >= 5) then
             lastDiseaseCheck = t
@@ -178,6 +198,7 @@ function M.new(bot, config, api)
                 end
             end
         end
+
         local interval = tonumber(cfg.UPDATE_INTERVAL_SECONDS) or 15
         local isGlobal = cfg.GLOBAL == true or cfg.ALL_BOTS == true
         local getBotsFn = api.getBots or (type(getBots) == "function" and getBots)
@@ -189,9 +210,10 @@ function M.new(bot, config, api)
             end
         end
 
-        -- Perubahan fase rotasi langsung tercermin: paksa dashboard refresh,
-        -- jangan tunggu interval. Tidak kirim pesan baru supaya tidak spam
-        -- (farming_block <-> planting_seeds berganti tiap beberapa detik).
+        if allBots and not isLeader(bot, allBots) then
+            return
+        end
+
         local phaseNow = rotationState()
         if phaseNow ~= lastPhase then
             if lastPhase ~= nil then
@@ -203,13 +225,8 @@ function M.new(bot, config, api)
             end
             lastPhase = phaseNow
         end
-        if not lastDashboard or t-lastDashboard >= math.max(3, interval) then
-            -- Dalam mode global, hanya 1 bot (leader) yang mengedit dashboard
-            -- agar tidak terjadi collision/rate-limit saat banyak bot berjalan bersamaan.
-            if allBots and not isLeader(bot, allBots) then
-                return
-            end
 
+        if not lastDashboard or t-lastDashboard >= math.max(3, interval) then
             local body
             if allBots then
                 body = buildGlobalDashboard(allBots)
