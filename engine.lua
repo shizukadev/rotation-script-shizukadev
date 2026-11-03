@@ -345,7 +345,12 @@ local function recoveryMessage(message)
         print("[Recovering] " .. text:sub(1,300))
         return
     end
-    if recoveryStatus.expectedMods and recognizedStatusMods[text] and not recoveryStatus.seenMods[text] then
+    -- Observed host format includes the Malady prefix, effect and timer.
+    local modKey = text
+    if text:match("^malady: torn punching muscle! reduced punch damage%s*%(") and text:match("secs? left%)$") then
+        modKey = "torn punching muscle"
+    end
+    if recoveryStatus.expectedMods and recognizedStatusMods[modKey] and not recoveryStatus.seenMods[text] then
         recoveryStatus.seenMods[text] = true
         recoveryStatus.receivedMods = recoveryStatus.receivedMods + 1
     end
@@ -957,8 +962,16 @@ local function checkAndDispatchHospital()
             gemWaitActive = false
             gemWaitNextWarp = 0
         else
-            waitGemCutsWorld()
-            return false
+            local recoveryClear = checkRecoveryStatus()
+            if recoveryClear and anySick == true and curId == 2 then
+                gemWaitActive = false
+                gemWaitNextWarp = 0
+                lastHospitalAttempt = 0 -- permit a new treatment after verified recovery expiry
+                print("[Hospital] Recovering hilang terverifikasi; Gem Cuts masih aktif, kembali ke 4AID.")
+            else
+                waitGemCutsWorld()
+                return false
+            end
         end
     end
 
