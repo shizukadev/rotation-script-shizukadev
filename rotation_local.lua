@@ -1072,8 +1072,16 @@ local function registerWorlds()
         local world = farmWorldName(farm)
         if world ~= "" then
             local door = farmDoor(farm)
-            local nameAndDoor = door ~= "" and (world .. ":" .. door) or world
             local itemToFarm = farmBlockId(farm)
+            -- v2.86: addFarm hanya menerima SATU argumen nama, dan item id harus
+            -- ikut di dalam nama (UI menampilkan "Name:DoorID:ItemID"). Dulu id
+            -- dikirim sebagai argumen kedua yang diabaikan host, sehingga kolom
+            -- Item di UI tampil "Unknown".
+            local nameAndDoor = world
+            if door ~= "" then nameAndDoor = nameAndDoor .. ":" .. door end
+            if door ~= "" and itemToFarm then
+                nameAndDoor = nameAndDoor .. ":" .. tostring(itemToFarm)
+            end
             local farmOk = pcall(function()
                 if type(manager.removeFarm) == "function" then
                     manager:removeFarm(world)
