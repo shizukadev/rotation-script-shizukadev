@@ -781,6 +781,20 @@ local shouldResumeAfterCure = false -- Intent apakah rotasi harus dinyalakan kem
 local intentionalStop = false
 local farmRunIntent = okStartup == true
 
+-- Melanjutkan farming setelah pengobatan. rotationConfirmedOn direset dulu:
+-- tanpa itu, kalau enable gagal / bot belum online, watchdog membaca
+-- "rotasi mati padahal pernah nyala" sebagai stop manual dan mengunci mati.
+local function resumeFarming(reason)
+    if intentionalStop or not bot.rotation then return false end
+    rotationConfirmedOn = false
+    if setRotationEnabled(true) and rotationIsOn() == true then
+        rotationConfirmedOn = true
+        print("[Engine] " .. reason)
+        return true
+    end
+    print("[Engine] Rotasi belum bisa dinyalakan setelah pengobatan; watchdog akan mencoba lagi.")
+    return false
+end
 local function checkAndDispatchHospital()
     if bot.status ~= BotStatus.online then return false end
     local mod = getHospitalModule()
@@ -799,11 +813,15 @@ local function checkAndDispatchHospital()
         if hospitalPending then
                     beginSpamRecovery()
                     hospitalPending = false
-            if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
-                setRotationEnabled(true)
+            if shouldResumeAfterCure and bot.status == BotStatus.online then
                 shouldResumeAfterCure = false
-                print("[Engine] Malady hilang terverifikasi. Rotasi bawaan dilanjutkan.")
-                return true
+                if resumeFarming("Malady hilang terverifikasi. Rotasi bawaan dilanjutkan.") then
+                    if type(sendWebhookNotification) == "function" then
+                        sendWebhookNotification(string.format("✅ **[Malady Cured]** Penyakit pada bot **%s** hilang terverifikasi! Rotasi bawaan dilanjutkan.", tostring(bot.name)))
+                    end
+                    return true
+                end
+                return false
             end
         end
         return false
@@ -857,15 +875,16 @@ local function checkAndDispatchHospital()
     if status == "cured" then
         beginSpamRecovery()
         hospitalPending = false
-        if shouldResumeAfterCure and not intentionalStop and bot.rotation and bot.status == BotStatus.online then
-            if setRotationEnabled(true) then
-                rotationConfirmedOn = (rotationIsOn() == true)
+        if shouldResumeAfterCure and bot.status == BotStatus.online then
+            shouldResumeAfterCure = false
+            local okResumed = resumeFarming("Pengobatan selesai (sembuh total). Rotasi bawaan dilanjutkan.")
+            if okResumed then
+                if type(sendWebhookNotification) == "function" then
+                    sendWebhookNotification(string.format("✅ **[Malady Cured]** Penyakit pada bot **%s** berhasil disembuhkan di 4AID! Rotasi bawaan dilanjutkan.", tostring(bot.name)))
+                end
+                return true
             end
-            print("[Engine] Pengobatan selesai (sembuh total). Rotasi bawaan dilanjutkan.")
-            if type(sendWebhookNotification) == "function" then
-                sendWebhookNotification(string.format("✅ **[Malady Cured]** Penyakit pada bot **%s** berhasil disembuhkan di 4AID! Rotasi bawaan dilanjutkan.", tostring(bot.name)))
-            end
-            return true
+            return false
         end
     else
         -- Jika gagal atau belum sembuh, rotasi tetap ditahan mati
