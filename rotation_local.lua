@@ -111,6 +111,7 @@ local CONFIG = {
         MIN_EDIT_SECONDS = 5, -- gabungkan perubahan cepat ke edit berikutnya
         PHASE_NOTIFY = false, -- true = kirim pesan tiap fase rotasi berubah (bisa ramai)
         GLOBAL = true, -- true = satu dashboard global terpadu untuk semua bot jika beberapa/semua bot dijalankan bersamaan
+        LEADER_BOT = "", -- nama bot pengirim dashboard global (kosongkan jika single bot)
     },
 
     -- Beli pack otomatis: rotasi Lucifer beli PackName saat gems mencapai PricePack,
@@ -495,8 +496,8 @@ function M.new(bot, config, api)
 
         if dashboard then
             if content == lastBody then return true end
-            local minEdit = tonumber(cfg.MIN_EDIT_SECONDS) or 5
-            if lastRequest and (t - lastRequest) < minEdit then return false end
+            local minEdit = tonumber(cfg.MIN_EDIT_SECONDS)
+            if minEdit and minEdit > 0 and lastRequest and (t - lastRequest) < minEdit then return false end
             lastRequest = t
         end
 
@@ -513,17 +514,18 @@ function M.new(bot, config, api)
 
         local usedEdit = dashboard and id ~= ""
         if dashboard and not usedEdit then
-            if createAttempted then return false end
-            createAttempted = true
+            if isGlobal then return false end
+            if messageId and messageId ~= "" then return false end
         end
 
         local hookUser = (dashboard and (cfg.GLOBAL == true or cfg.ALL_BOTS == true))
             and "Lucifer Global Monitor"
             or ("Lucifer Monitor (" .. tostring(bot.name) .. ")")
 
-        local editSuccess = true
+        local deliverSuccess = false
+        local hook = nil
         local ok = pcall(function()
-            local hook = api.Webhook.new(cfg.URL)
+            hook = api.Webhook.new(cfg.URL)
             hook.username = hookUser
             hook.content = tostring(content)
             if usedEdit then
@@ -532,23 +534,30 @@ function M.new(bot, config, api)
                 if not okEdit or resEdit == false then
                     okEdit, resEdit = pcall(function() return hook:edit(id) end)
                 end
-                if not okEdit or resEdit == false then
-                    editSuccess = false
+                if okEdit and resEdit ~= false then
+                    deliverSuccess = (resEdit == true) and "confirmed" or "unconfirmed"
+                else
+                    deliverSuccess = false
                     error("Webhook:edit failed")
                 end
             else
                 hook:send()
-                if dashboard and hook.message_id and tostring(hook.message_id) ~= "" then
-                    messageId = tostring(hook.message_id)
+                if hook.message_id and tostring(hook.message_id) ~= "" then
+                    if dashboard then messageId = tostring(hook.message_id) end
                 end
+                deliverSuccess = "confirmed"
             end
         end)
 
-        if ok and editSuccess then
-            if dashboard then lastBody = content end
+        if ok and deliverSuccess then
+            -- Hanya cache sebagai lastBody jika edit terkonfirmasi (resEdit == true atau send baru)
+            -- Hasil unconfirmed (resEdit == nil) tidak dicache sebagai sukses permanen
+            if dashboard and deliverSuccess == "confirmed" then
+                lastBody = content
+            end
             return true
         else
-            retryAfter = now() + 15
+            if dashboard then retryAfter = now() + 15 end
             if api.print then api.print("[Webhook] Request failed; delivery unverified.") end
             return false
         end
@@ -587,34 +596,13 @@ function M.new(bot, config, api)
     end
 
     local function isLeader(myBot, allBots)
-        local onlineStatus = (api.BotStatus and api.BotStatus.online) or 1
-        -- Leader ditentukan dari pengirim yang aktif (menjalankan monitor)
-        -- Jika pengirim eksplisit diatur di config, hormati itu
+        -- Jika pengirim eksplisit diatur di config (LEADER_BOT), hanya bot itu yang mengirim
         if cfg.LEADER_BOT and tostring(cfg.LEADER_BOT) ~= "" then
             return myBot.name == cfg.LEADER_BOT
         end
-        -- Default: bot ini adalah pengirim dashboard untuk instance ini
-        -- Jika allBots terdeteksi, hanya bot pertama yang memiliki status online
-        -- DAN terdaftar aktif pada environment yang menjalankan peran leader
-        local activeParticipants = api._ACTIVE_MONITOR_BOTS or _G._ACTIVE_MONITOR_BOTS
-        if type(activeParticipants) == "table" and next(activeParticipants) ~= nil then
-            for _, b in ipairs(allBots) do
-                if b.status == onlineStatus and activeParticipants[b.name] then
-                    return b.name == myBot.name
-                end
-            end
-            for _, b in ipairs(allBots) do
-                if activeParticipants[b.name] then
-                    return b.name == myBot.name
-                end
-            end
-        end
-        for _, b in ipairs(allBots) do
-            if b.status == onlineStatus then
-                return b.name == myBot.name
-            end
-        end
-        return allBots[1] and allBots[1].name == myBot.name
+        -- Tanpa LEADER_BOT eksplisit, setiap bot mengelola statusnya sendiri
+        -- (tidak ada klaim failover palsu tanpa shared memory/file lock terverifikasi)
+        return false
     end
 
     local function buildGlobalDashboard(allBots)
@@ -652,19 +640,6 @@ function M.new(bot, config, api)
 
     local lastDiseaseCheck = nil
     local obj = {}
-    -- Registrasi bot ini sebagai peserta aktif monitor
-    pcall(function()
-        local part = api._ACTIVE_MONITOR_BOTS or _G._ACTIVE_MONITOR_BOTS
-        if not part then
-            part = {}
-            if api._ACTIVE_MONITOR_BOTS ~= nil or type(api) == "table" then
-                api._ACTIVE_MONITOR_BOTS = part
-            else
-                _G._ACTIVE_MONITOR_BOTS = part
-            end
-        end
-        part[bot.name] = true
-    end)
     function obj.notify(message) return deliver(tostring(message), false) end
     function obj.tick(action)
         local t = now()

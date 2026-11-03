@@ -110,6 +110,7 @@ local CONFIG = {
         MIN_EDIT_SECONDS = 5, -- gabungkan perubahan cepat ke edit berikutnya
         PHASE_NOTIFY = false, -- true = kirim pesan tiap fase rotasi berubah (bisa ramai)
         GLOBAL = true, -- true = satu dashboard global terpadu untuk semua bot jika beberapa/semua bot dijalankan bersamaan
+        LEADER_BOT = "", -- nama bot pengirim dashboard global (kosongkan jika single bot)
     },
 
     -- Beli pack otomatis: rotasi Lucifer beli PackName saat gems mencapai PricePack,

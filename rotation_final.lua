@@ -87,6 +87,7 @@ local CONFIG = {
         MIN_EDIT_SECONDS = 5,
         PHASE_NOTIFY = false,
         GLOBAL = true,
+        LEADER_BOT = "",
     },
 
     AUTO_BUY_PACK = {
