@@ -101,16 +101,16 @@ local CONFIG = {
     },
 
     -- Webhook Live Monitor (webhook_edit)
+    MULTI_BOT = { startbot = 1, endbot = 11 },
     WEBHOOK = {
         ENABLED = true,
         URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA", -- ganti dengan URL webhook Discord Anda (jangan di-commit ke publik)
         MESSAGE_ID = "1567025865047539856", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
         UPDATE_INTERVAL_SECONDS = 15, -- jeda refresh dashboard
-        EVENT_NOTIFICATIONS = true, -- live dashboard only; true mengaktifkan pesan alert terpisah
+        EVENT_NOTIFICATIONS = false, -- live dashboard only; true mengaktifkan pesan alert terpisah
         MIN_EDIT_SECONDS = 5, -- gabungkan perubahan cepat ke edit berikutnya
         PHASE_NOTIFY = false, -- true = kirim pesan tiap fase rotasi berubah (bisa ramai)
         GLOBAL = true, -- true = satu dashboard global terpadu untuk semua bot jika beberapa/semua bot dijalankan bersamaan
-        LEADER_BOT = "", -- nama bot pengirim dashboard global (kosongkan jika single bot)
     },
 
     -- Beli pack otomatis: rotasi Lucifer beli PackName saat gems mencapai PricePack,

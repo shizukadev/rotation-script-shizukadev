@@ -147,7 +147,7 @@ local function sendAdventureDoorPacket(b, tx, ty, btn)
     return false
 end
 
-function M.runCure(botCtx, onProgress)
+function M.runCure(botCtx, onProgress, recoveryProbe)
     local b = botCtx or (type(getBot) == "function" and getBot())
     if not b then
         print("[Error] Bot context tidak ditemukan.")
@@ -226,14 +226,14 @@ function M.runCure(botCtx, onProgress)
     b:hit(61, 12)
     sleep(800)
 
-    print("[Step 2] Berjalan ke portal (64, 12)...")
-    if not walkTo(b, 64, 12, TARGET_WORLD) then
-        print("[Error] Gagal findPath ke portal (64, 12) atau salah world/terputus.")
+    print("[Step 2] Berjalan ke portal (58, 15)...")
+    if not walkTo(b, 58, 15, TARGET_WORLD) then
+        print("[Error] Gagal findPath ke portal (58, 15) atau salah world/terputus.")
         cleanup()
         return false
     end
-    if not enterPortal(b, 64, 12, TARGET_WORLD) then
-        print("[Error] Terputus saat interaksi portal (64, 12)")
+    if not enterPortal(b, 58, 15, TARGET_WORLD) then
+        print("[Error] Terputus saat interaksi portal (58, 15)")
         cleanup()
         return false
     end
@@ -294,6 +294,20 @@ function M.runCure(botCtx, onProgress)
             return false
         end
 
+        -- /status is owner-requested refresh; say() acceptance is not proof
+        -- that the server has updated malady. Keep valid-clearance checks.
+        local refreshOK, recovering = pcall(function()
+            if type(recoveryProbe) == "function" then return recoveryProbe() end
+            b:say("/status")
+            return false
+        end)
+        if refreshOK and recovering == true then
+            print("[Hospital] Recovering terdeteksi; keluar dari penantian untuk evaluasi rotasi.")
+            return "recovering"
+        end
+        if not refreshOK then
+            print("[Hospital] Permintaan /status gagal; tetap menunggu data malady valid.")
+        end
         local anySick, curId = M.hasAnyMalady(b)
         print("[Hospital] Malady saat ini: ID=" .. tostring(curId) .. ", nama=" .. M.getMaladyName(curId) .. ", status=" .. tostring(anySick))
         if anySick == false then

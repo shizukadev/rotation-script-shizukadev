@@ -78,6 +78,7 @@ local CONFIG = {
         CHICKEN_FEET = false,
     },
 
+    MULTI_BOT = { startbot = 1, endbot = 11 },
     WEBHOOK = {
         ENABLED = true,
         URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA", -- ganti dengan URL webhook Discord Anda (jangan di-commit ke publik)
@@ -353,15 +354,127 @@ local function beginSpamRecovery()
     if bot.auto_spam then pcall(function() bot.auto_spam.enabled = false end) end
     print("[Spam] Recovery setelah pengobatan: AutoSpam OFF selama " .. tostring(seconds) .. " detik.")
 end
+-- Recovering guard: unknown is OFF. No guessed native mod fields.
+local recoveryStatus = { known = false, active = false, checking = false, nextCheck = 0 }
+local function parseRecoveringSeconds(text)
+    local body = text:lower():match("recovering%s*%((.-)%)")
+    if not body then return nil end
+    local h = tonumber(body:match("(%d+)%s*hour")) or 0
+    local m = tonumber(body:match("(%d+)%s*min")) or 0
+    local sec = tonumber(body:match("(%d+)%s*sec")) or 0
+    local total = h * 3600 + m * 60 + sec
+    if total <= 0 then return nil end
+    return total
+end
+-- Positive recognition only; unsupported entries keep the response UNKNOWN.
+local recognizedStatusMods = {
+    ["enhanced digging"] = true,
+    ["torn punching muscle"] = true, ["gem cuts"] = true,
+    ["chicken feet"] = true, ["grumbleteeth"] = true,
+}
+local function recoveryMessage(message)
+    if not recoveryStatus.checking or type(message) ~= "string" then return end
+    local text = message:match("msg|([^\r\n]*)")
+    if not text then return end
+    text = text:gsub("`.", ""):lower():match("^%s*(.-)%s*$")
+    local ok, name = pcall(function() return tostring(bot.name or ""):lower() end)
+    if text:find("'s status:", 1, true) then
+        recoveryStatus.header = ok and name ~= "" and text == name .. "'s status:"
+        recoveryStatus.expectedMods = nil
+        recoveryStatus.receivedMods = 0
+        recoveryStatus.seenMods = {}
+        recoveryStatus.known = recoveryStatus.active == true
+        return
+    end
+    if not recoveryStatus.header then return end
+    local count = text:match("^(%d+)%s+mods? active:%s*$") or text:match("^mods? active:%s*(%d+)%s*$")
+    if text == "no mods active" or text == "no mods active:" then count = "0" end
+    if count then
+        recoveryStatus.expectedMods = tonumber(count)
+        recoveryStatus.receivedMods = 0
+        recoveryStatus.seenMods = {}
+        recoveryStatus.known = recoveryStatus.active == true or tonumber(count) == 0
+        return
+    end
+    if text:match("^recovering%s*%(") then
+        recoveryStatus.active = true
+        recoveryStatus.known = true
+        local seconds = parseRecoveringSeconds(text)
+        recoveryStatus.untilTs = seconds and os.time() + seconds or nil
+        print("[Recovering] " .. text:sub(1,300))
+        return
+    end
+    if recoveryStatus.expectedMods and recognizedStatusMods[text] and not recoveryStatus.seenMods[text] then
+        recoveryStatus.seenMods[text] = true
+        recoveryStatus.receivedMods = recoveryStatus.receivedMods + 1
+    end
+end
+local recoveryEventsOK = pcall(function()
+    assert(type(addEvent) == "function" and type(listenEvents) == "function")
+    addEvent(Event.game_message, recoveryMessage)
+
+end)
+local function checkRecoveryStatus()
+    local now = os.time()
+    if bot.status ~= BotStatus.online then
+        recoveryStatus.known = false
+        recoveryStatus.checking = false
+        recoveryStatus.nextCheck = 0
+        return false
+    end
+    if not recoveryEventsOK then return false end
+    if not recoveryStatus.checking and now >= recoveryStatus.nextCheck then
+        recoveryStatus.known = false
+        recoveryStatus.active = false
+        recoveryStatus.header = false
+        recoveryStatus.expectedMods = nil
+        recoveryStatus.receivedMods = 0
+        recoveryStatus.seenMods = {}
+        recoveryStatus.untilTs = nil
+        recoveryStatus.checking = true
+        recoveryStatus.deadline = now + 8
+        recoveryStatus.nextCheck = now + 60
+        local ok = pcall(function()
+            if bot:isInWorld() then bot:say("/status") else error("outside world") end
+        end)
+        if not ok then recoveryStatus.checking = false end
+    end
+    if recoveryStatus.checking then
+        -- Bounded event pump; never install a second infinite loop/thread.
+        local ok = pcall(listenEvents, 1)
+        if not ok then recoveryStatus.known = false; recoveryStatus.checking = false end
+        if os.time() >= recoveryStatus.deadline then
+            recoveryStatus.checking = false
+            if recoveryStatus.header and recoveryStatus.expectedMods ~= nil and (recoveryStatus.receivedMods or 0) == recoveryStatus.expectedMods then
+                recoveryStatus.known = true
+                if not recoveryStatus.active then
+                    recoveryStatus.active = false
+                end
+            end
+            if recoveryStatus.active and recoveryStatus.untilTs then
+                recoveryStatus.nextCheck = recoveryStatus.untilTs
+            end
+            print("[Recovering] " .. (recoveryStatus.active and "aktif; AutoSpam OFF" or
+                (recoveryStatus.known and not recoveryStatus.active) and "bebas recovering (Recovering tidak aktif)" or "status belum terverifikasi; AutoSpam OFF"))
+        end
+    end
+    return not recoveryStatus.checking and recoveryStatus.known and not recoveryStatus.active
+end
+
 local lastSpamCheck = nil
 local function updateSpamState()
     local okObj, spamObj = pcall(function() return bot.auto_spam end)
     if not okObj or not spamObj then return end
     if bot.status ~= BotStatus.online then
         pcall(function() spamObj.enabled = false end)
+        checkRecoveryStatus()
         lastSpamCheck = nil
         return
     end
+    -- Disable before requesting/pumping events; preserve ON between throttled checks.
+    if recoveryStatus.checking or not recoveryStatus.known or recoveryStatus.active or os.time() >= recoveryStatus.nextCheck then setSpam(false) end
+    local recoveryClear = checkRecoveryStatus()
+    if not recoveryClear then setSpam(false) end
     local now = os.time()
     if lastSpamCheck and now - lastSpamCheck < 5 then return end
     lastSpamCheck = now
@@ -369,10 +482,10 @@ local function updateSpamState()
     local ok, healthyOutsideHospital = pcall(function()
         if bot.status ~= BotStatus.online then return false end
         local id = tonumber(bot.malady)
-        return id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID")
+        return bot.status == BotStatus.online and id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID")
     end)
     -- Preserve all owner-configured text, intervals and other spam options.
-    pcall(function() spamObj.enabled = cfg.ENABLED ~= false and ok and healthyOutsideHospital == true end)
+    pcall(function() spamObj.enabled = cfg.ENABLED ~= false and recoveryClear and ok and healthyOutsideHospital == true end)
 end
 
 local webhookMonitor = nil
@@ -389,7 +502,7 @@ local function getWebhookMonitor()
             end
         end
         if mod and type(mod.new) == "function" then
-            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, RotationStatus = RotationStatus, Webhook = Webhook, getBots = getBots, print = print })
+            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, RotationStatus = RotationStatus, Webhook = Webhook, io = io, print = print })
         end
     end
     return webhookMonitor
@@ -700,9 +813,23 @@ local function startupStage(name, fn)
     print("[Setup] Selesai: " .. name)
     return result ~= false
 end
+local multi = CONFIG.MULTI_BOT
+local localIndex = tonumber(bot.index)
+local inRange = not multi or (localIndex and localIndex >= multi.startbot and localIndex <= multi.endbot)
+if not inRange then print("[Setup] Bot di luar rentang startbot/endbot; script dihentikan."); return end
+if multi then
+    print("[Setup] Menunggu slot startup index " .. tostring(localIndex))
+    sleep((localIndex - multi.startbot) * 5000)
+end
 local competingOK = startupStage("matikan modul pesaing", disableCompetingModules)
 local botSetupOK = startupStage("pengaturan bot opsional", applyOptionalBotSettings)
-local worldsSetupOK = startupStage("registrasi world", registerWorlds)
+-- Only one instance mutates WorldManager during multi-bot startup.
+local worldsSetupOK = true
+if not multi or localIndex == multi.startbot then
+    worldsSetupOK = startupStage("registrasi world", registerWorlds)
+else
+    print("[Setup] Registrasi world dilewati; hanya startbot yang mengubah WorldManager.")
+end
 local rotationSetupOK = startupStage("pengaturan rotasi", applyRotationSettings)
 -- Hanya penyiapan ROTASI yang boleh menentukan rotasi menyala. Kegagalan
 -- pengaturan bot (AutoWear/AutoTrash/AutoMalady yang tidak cocok dengan build
@@ -791,12 +918,26 @@ local HOSPITAL_COOLDOWN = 180 -- Jeda 3 menit sebelum mengulang rute 4AID jika m
 local hospitalPending = false -- Status pengobatan sedang berjalan/menunggu sembuh
 local shouldResumeAfterCure = false -- Intent apakah rotasi harus dinyalakan kembali pasca sembuh
 local intentionalStop = false
-local farmRunIntent = okStartup == true -- user stop intent
+local farmRunIntent = okStartup == true
+local gemWaitActive = false
+local gemWaitNextWarp = 0
+local function waitGemCutsWorld()
+    if bot.rotation then setRotationEnabled(false) end
+    if bot.status ~= BotStatus.online or lockoutTriggered then return end
+    local now = os.time()
+    if now < gemWaitNextWarp then return end
+    local ok, inside = pcall(function() return bot:isInWorld("luacid") end)
+    if ok and inside then return end
+    gemWaitNextWarp = now + 30
+    print("[Hospital] Gem Cuts setelah gagal surgery: menunggu malady hilang di luacid; rotasi OFF.")
+    pcall(function() bot:warp("luacid") end)
+end
+ -- user stop intent
 
 -- Lanjut farming setelah pengobatan; rotationConfirmedOn direset agar watchdog
 -- tidak salah membaca "mati padahal pernah nyala" sebagai stop manual.
 local function resumeFarming(reason)
-    if intentionalStop or not bot.rotation then return false end
+    if intentionalStop or lockoutTriggered or bot.status ~= BotStatus.online or not bot.rotation then return false end
     rotationConfirmedOn = false
     if setRotationEnabled(true) and rotationIsOn() == true then
         rotationConfirmedOn = true
@@ -818,6 +959,16 @@ local function checkAndDispatchHospital()
         anySick, curId = mod.checkNeedsHospital(bot)
     end
 
+    if gemWaitActive then
+        if anySick == false then
+            gemWaitActive = false
+            gemWaitNextWarp = 0
+        else
+            waitGemCutsWorld()
+            return false
+        end
+    end
+
     if anySick == false then
         if hospitalPending then
             beginSpamRecovery()
@@ -835,6 +986,25 @@ local function checkAndDispatchHospital()
         end
         return false
     end
+
+    -- Gem Cuts never permits farming, including during Recovering.
+    if anySick == true and curId == 2 then
+        if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+        hospitalPending = true
+        if bot.rotation then setRotationEnabled(false) end
+    end
+    checkRecoveryStatus()
+    if recoveryStatus.active == true then
+        if anySick == true and curId == 1 then
+            hospitalPending = false
+            shouldResumeAfterCure = false
+            if farmRunIntent and not intentionalStop then
+                resumeFarming("Torn Punching Muscle + Recovering: pengobatan ditunda, rotasi dilanjutkan.")
+            end
+        end
+        return false
+    end
+    if not recoveryStatus.known or recoveryStatus.checking then return false end
 
     if anySick == "unknown" then
         if hospitalPending and bot.rotation then setRotationEnabled(false) end
@@ -872,7 +1042,36 @@ local function checkAndDispatchHospital()
         setRotationEnabled(false)
     end
 
-    local status = mod.runCure(bot, updateWebhook)
+    if multi then
+        print("[Hospital] Menunggu slot admission index " .. tostring(localIndex))
+        sleep((localIndex - multi.startbot) * 10000)
+        if bot.status ~= BotStatus.online or lockoutTriggered then return false end
+        local stillNeeds, currentId = mod.checkNeedsHospital(bot)
+        if stillNeeds ~= true or (currentId ~= 1 and currentId ~= 2) then return false end
+    end
+    recoveryStatus.nextCheck = 0 -- obtain fresh surgery result during hospital wait
+    local status = mod.runCure(bot, updateWebhook, function()
+        checkRecoveryStatus()
+        return recoveryStatus.active == true
+    end)
+    if status == "recovering" then
+        local sick, id = mod.hasAnyMalady(bot)
+        if sick == true and id == 2 then
+            gemWaitActive = true
+            hospitalPending = true
+            waitGemCutsWorld()
+            return false
+        end
+        if sick == false or (sick == true and id == 1) then
+            hospitalPending = false
+            shouldResumeAfterCure = false
+            if farmRunIntent and not intentionalStop then resumeFarming("Pengobatan berakhir dengan Recovering; rotasi diizinkan untuk Healthy/Torn.") end
+        else
+            hospitalPending = true
+            if bot.rotation then setRotationEnabled(false) end
+        end
+        return false
+    end
 
     if status == "cured" then
         beginSpamRecovery()

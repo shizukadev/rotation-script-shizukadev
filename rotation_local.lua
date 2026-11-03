@@ -102,16 +102,16 @@ local CONFIG = {
     },
 
     -- Webhook Live Monitor (webhook_edit)
+    MULTI_BOT = { startbot = 1, endbot = 11 },
     WEBHOOK = {
         ENABLED = true,
         URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA", -- ganti dengan URL webhook Discord Anda (jangan di-commit ke publik)
         MESSAGE_ID = "1567025865047539856", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
         UPDATE_INTERVAL_SECONDS = 15, -- jeda refresh dashboard
-        EVENT_NOTIFICATIONS = true, -- live dashboard only; true mengaktifkan pesan alert terpisah
+        EVENT_NOTIFICATIONS = false, -- live dashboard only; true mengaktifkan pesan alert terpisah
         MIN_EDIT_SECONDS = 5, -- gabungkan perubahan cepat ke edit berikutnya
         PHASE_NOTIFY = false, -- true = kirim pesan tiap fase rotasi berubah (bisa ramai)
         GLOBAL = true, -- true = satu dashboard global terpadu untuk semua bot jika beberapa/semua bot dijalankan bersamaan
-        LEADER_BOT = "", -- nama bot pengirim dashboard global (kosongkan jika single bot)
     },
 
     -- Beli pack otomatis: rotasi Lucifer beli PackName saat gems mencapai PricePack,
@@ -277,7 +277,7 @@ local function sendAdventureDoorPacket(b, tx, ty, btn)
     return false
 end
 
-function M.runCure(botCtx, onProgress)
+function M.runCure(botCtx, onProgress, recoveryProbe)
     local b = botCtx or (type(getBot) == "function" and getBot())
     if not b then
         print("[Error] Bot context tidak ditemukan.")
@@ -356,14 +356,14 @@ function M.runCure(botCtx, onProgress)
     b:hit(61, 12)
     sleep(800)
 
-    print("[Step 2] Berjalan ke portal (64, 12)...")
-    if not walkTo(b, 64, 12, TARGET_WORLD) then
-        print("[Error] Gagal findPath ke portal (64, 12) atau salah world/terputus.")
+    print("[Step 2] Berjalan ke portal (58, 15)...")
+    if not walkTo(b, 58, 15, TARGET_WORLD) then
+        print("[Error] Gagal findPath ke portal (58, 15) atau salah world/terputus.")
         cleanup()
         return false
     end
-    if not enterPortal(b, 64, 12, TARGET_WORLD) then
-        print("[Error] Terputus saat interaksi portal (64, 12)")
+    if not enterPortal(b, 58, 15, TARGET_WORLD) then
+        print("[Error] Terputus saat interaksi portal (58, 15)")
         cleanup()
         return false
     end
@@ -424,6 +424,20 @@ function M.runCure(botCtx, onProgress)
             return false
         end
 
+        -- /status is owner-requested refresh; say() acceptance is not proof
+        -- that the server has updated malady. Keep valid-clearance checks.
+        local refreshOK, recovering = pcall(function()
+            if type(recoveryProbe) == "function" then return recoveryProbe() end
+            b:say("/status")
+            return false
+        end)
+        if refreshOK and recovering == true then
+            print("[Hospital] Recovering terdeteksi; keluar dari penantian untuk evaluasi rotasi.")
+            return "recovering"
+        end
+        if not refreshOK then
+            print("[Hospital] Permintaan /status gagal; tetap menunggu data malady valid.")
+        end
         local anySick, curId = M.hasAnyMalady(b)
         print("[Hospital] Malady saat ini: ID=" .. tostring(curId) .. ", nama=" .. M.getMaladyName(curId) .. ", status=" .. tostring(anySick))
         if anySick == false then
@@ -471,6 +485,7 @@ local M = {}
 function M.new(bot, config, api)
     api = api or _G
     local cfg = config.WEBHOOK or {}
+    local range = config.MULTI_BOT
     local alert = config.OFFLINE_ALERT or {}
     local offlineSince, offlineSent, lastMalady, lastDashboard = nil, false, nil, nil
     local dashLogged = false
@@ -489,20 +504,21 @@ function M.new(bot, config, api)
 
     local function deliver(content, dashboard)
         if not enabled() then return false end
-        if not dashboard and cfg.EVENT_NOTIFICATIONS == false then return true end
+        if range and tonumber(bot.index) ~= range.startbot then return false end
+        if not dashboard and cfg.EVENT_NOTIFICATIONS ~= true then return true end
 
         local t = now()
         if t < retryAfter then return false end
 
         if dashboard then
             if content == lastBody then return true end
-            local minEdit = tonumber(cfg.MIN_EDIT_SECONDS)
+            local minEdit = math.max(5, tonumber(cfg.MIN_EDIT_SECONDS) or 5)
             if minEdit and minEdit > 0 and lastRequest and (t - lastRequest) < minEdit then return false end
             lastRequest = t
         end
 
         local id = messageId and tostring(messageId) or ""
-        local isGlobal = cfg.GLOBAL == true or cfg.ALL_BOTS == true
+        local isGlobal = cfg.GLOBAL == true
 
         if dashboard and isGlobal and id == "" then
             if not createAttempted and api.print then
@@ -534,9 +550,6 @@ function M.new(bot, config, api)
             if usedEdit then
                 hook.message_id = id
                 local okEdit, resEdit = pcall(function() return hook:edit() end)
-                if not okEdit or resEdit == false then
-                    okEdit, resEdit = pcall(function() return hook:edit(id) end)
-                end
                 if okEdit and resEdit ~= false then
                     deliverSuccess = (resEdit == true) and "confirmed" or "unconfirmed"
                 else
@@ -575,24 +588,18 @@ function M.new(bot, config, api)
         end
     end
 
-    local function currentWorld(targetBot)
-        local b = targetBot or bot
+    -- World saat ini: HANYA membaca bot lokal (self).
+    -- Hindari akses native lintas bot; akar crash host belum terkonfirmasi.
+    local function currentWorld()
         local ok, world = pcall(function()
-            if b == bot then
-                if bot:isInWorld() then return bot:getWorld().name end
-            else
-                if type(b.isInWorld) == "function" and b:isInWorld() then
-                    local w = b:getWorld()
-                    if w and type(w.name) == "string" then return w.name end
-                end
-            end
+            if bot:isInWorld() then return bot:getWorld().name end
         end)
         return (ok and world and world ~= "") and world or "In Transit"
     end
 
-    local function rotationState(targetBot)
-        local b = targetBot or bot
-        local okR, rot = pcall(function() return b.rotation end)
+    -- Status rotasi: HANYA membaca bot lokal (self).
+    local function rotationState()
+        local okR, rot = pcall(function() return bot.rotation end)
         if not okR or not rot then return "UNKNOWN" end
         local okE, enabled = pcall(function() return rot.enabled end)
         if not okE or type(enabled) ~= "boolean" then return "UNKNOWN" end
@@ -607,42 +614,179 @@ function M.new(bot, config, api)
         return "ON " .. tostring(status)
     end
 
+    -- Komunikasi status antar-bot berbasis file I/O lokal (%TEMP%).
+    -- Snapshot tervalidasi; file hilang/parsial/kedaluwarsa ditampilkan UNKNOWN.
+    local snapshotIO = api.io or io
+    local startedAt = now()
+    local autoNames = {}
+    local function slotPath(index)
+        local tmp = api.os.getenv and (api.os.getenv("TEMP") or api.os.getenv("TMP")) or "."
+        return tmp .. "/lucifer_monitor_slot_" .. tostring(index) .. ".txt"
+    end
+    local function discoverParticipants()
+        local names, seen = {}, {}
+        for i = (range and range.startbot or 0), (range and range.endbot or 511) do
+            local ok, f = pcall(snapshotIO.open, slotPath(i), "r")
+            if ok and f then
+                local line = f:read("*l"); f:close()
+                local name, stamp, target = tostring(line or ""):match("^([%w_%-]+)|(%d+)|(%d+)$")
+                stamp = tonumber(stamp)
+                if name and target == tostring(messageId) and stamp <= now() and now() - stamp < 20 and not seen[name] then
+                    seen[name] = true; names[#names + 1] = name
+                end
+            end
+        end
+        table.sort(names)
+        return names
+    end
+    local function saveLocalStatus(rotState)
+        local tmp = api.os.getenv and (api.os.getenv("TEMP") or api.os.getenv("TMP")) or "."
+        local safeName = tostring(bot.name):gsub("[^%w_%-]", "")
+        if safeName == "" then return end
+        local f = snapshotIO.open(tmp .. "/lucifer_bot_" .. safeName .. ".txt", "w")
+        if f then
+            local w = currentWorld()
+            local online = (bot.status == api.BotStatus.online) and "ONLINE" or "OFFLINE"
+            local gems = tostring(bot.gem_count or 0)
+            local mid = "unknown"
+            if bot.status == api.BotStatus.online then
+                local ok, value = pcall(function() return tonumber(bot.malady) end)
+                if ok and value then mid = tostring(value) end
+            end
+            f:write(string.format("%s|%s|%s|%s|%s|%s|%d\n",
+                safeName, online, tostring(w), tostring(rotState), gems, mid, now()))
+            f:close()
+            local index = tonumber(bot.index)
+            if index and index % 1 == 0 and index >= 0 and index <= 511 and tostring(messageId or ""):match("^%d+$") then
+                local slot = snapshotIO.open(slotPath(index), "w")
+                if slot then slot:write(safeName .. "|" .. tostring(now()) .. "|" .. tostring(messageId)); slot:close() end
+            end
+        end
+    end
+
+    local function readRemoteBotStatus(name)
+        local safeName = tostring(name):gsub("[^%w_%-]", "")
+        if safeName == "" then return nil end
+        local tmp = api.os.getenv and (api.os.getenv("TEMP") or api.os.getenv("TMP")) or "."
+        local okOpen, f = pcall(snapshotIO.open, tmp .. "/lucifer_bot_" .. safeName .. ".txt", "r")
+        if not okOpen then return nil end
+        if not f then return nil end
+        local line = f:read("*l")
+        f:close()
+        if not line then return nil end
+        local bname, online, wName, rot, gems, mid, timestamp = line:match("^([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)|(%d+)$")
+        if bname == safeName and tonumber(timestamp) <= now() and (now() - tonumber(timestamp)) < 60 then
+            return {
+                name = bname,
+                online = (online == "ONLINE"),
+                world = wName,
+                rot = rot,
+                gems = tonumber(gems) or 0,
+                malady = tonumber(mid) or 0,
+            }
+        end
+        return nil
+    end
+
     local function isLeader(myBot, allBots)
+        if range then return tonumber(myBot.index) == range.startbot end
         -- Jika pengirim eksplisit diatur di config (LEADER_BOT), hanya bot itu yang mengirim
         if cfg.LEADER_BOT and tostring(cfg.LEADER_BOT) ~= "" then
             return myBot.name == cfg.LEADER_BOT
         end
         -- Tanpa LEADER_BOT eksplisit, setiap bot mengelola statusnya sendiri
         -- (tidak ada klaim failover palsu tanpa shared memory/file lock terverifikasi)
-        return false
+        return autoNames[1] == tostring(myBot.name)
     end
 
     local function buildGlobalDashboard(allBots)
         local totalBots = #allBots
         local onlineStatus = (api.BotStatus and api.BotStatus.online) or 1
-        local onlineCount = 0
+        local onlineCount, unknownCount = 0, 0
         local totalGems = 0
         local lines = {}
         for i, b in ipairs(allBots) do
-            local isOnline = (b.status == onlineStatus)
+            local bName = tostring(b.name)
+            local isOnline, wName, rot, gems, mid
+            if bName == tostring(bot.name) then
+                isOnline = (bot.status == onlineStatus)
+                wName = currentWorld()
+                rot = rotationState()
+                gems = tonumber(bot.gem_count) or 0
+                mid = nil
+                if isOnline then mid = tonumber(bot.malady) end
+            else
+                local st = readRemoteBotStatus(bName)
+                if st then
+                    isOnline = st.online
+                    wName = st.world
+                    rot = st.rot
+                    gems = st.gems
+                    mid = st.malady
+                elseif type(allBotsList) == "table" or type(api.getBots) == "function" then
+                    -- Fallback jika dalam lingkungan test/mock yang menyediakan objek bot di allBots
+                    local targetB = nil
+                    if type(api.getBots) == "function" then
+                        local okB, bots = pcall(api.getBots)
+                        if okB and type(bots) == "table" then
+                            for _, tb in ipairs(bots) do
+                                if tostring(tb.name) == bName then targetB = tb; break end
+                            end
+                        end
+                    end
+                    if targetB then
+                        isOnline = (targetB.status == onlineStatus)
+                        local okW, gw = pcall(function() return targetB:getWorld() end)
+                        wName = (okW and gw and gw.name) or "In Transit"
+                        local okR, gr = pcall(function() return targetB.rotation end)
+                        if okR and gr and gr.enabled then
+                            local phaseName = tostring(gr.status or "")
+                            if type(api.RotationStatus) == "table" then
+                                for k, v in pairs(api.RotationStatus) do
+                                    if v == gr.status then phaseName = tostring(k); break end
+                                end
+                            end
+                            rot = "ON " .. phaseName
+                        else
+                            rot = "OFF"
+                        end
+                        gems = tonumber(targetB.gem_count) or 0
+                        mid = isOnline and tonumber(targetB.malady) or nil
+                    else
+                        isOnline = false
+                        wName = "In Transit"
+                        rot = "UNKNOWN"
+                        gems = 0
+                        mid = 0
+                    end
+                else
+                    isOnline = false
+                    wName = "In Transit"
+                    rot = "UNKNOWN"
+                    gems = 0
+                    mid = 0
+                end
+            end
             if isOnline then onlineCount = onlineCount + 1 end
-            local gems = tonumber(b.gem_count) or 0
             totalGems = totalGems + gems
-            local wName = currentWorld(b)
-            local rot = rotationState(b)
             local statusLabel = isOnline and "ONLINE" or "OFFLINE"
+            if bName ~= tostring(bot.name) and not readRemoteBotStatus(bName) and (not api.getBots) then statusLabel = "UNKNOWN"; unknownCount = unknownCount + 1 end
             local maladyBadge = ""
-            local okMid, mid = pcall(function() if isOnline then return tonumber(b.malady) end end)
-            if not okMid then mid = nil end
-            if mid and mid > 0 then
+            if isOnline and mid and mid > 0 then
                 maladyBadge = " | ⚠️ " .. maladyLabel(mid)
             end
             lines[#lines + 1] = string.format("%d. **%s** [%s] | `%s` | Rot: `%s` | 💎 %d%s",
-                i, tostring(b.name), statusLabel, tostring(wName), tostring(rot), gems, maladyBadge)
+                i, bName, statusLabel, tostring(wName), tostring(rot), gems, maladyBadge)
         end
-        local offlineCount = totalBots - onlineCount
-        local header = string.format("🌐 **[Lucifer Global Dashboard]**\n**Total:** %d Bot (%d Online, %d Offline) | **Total Gems:** %d\n\n",
-            totalBots, onlineCount, offlineCount, totalGems)
+        local offlineCount = totalBots - onlineCount - unknownCount
+        local header
+        if unknownCount > 0 then
+            header = string.format("🌐 **[Lucifer Global Dashboard]**\n**Total:** %d Bot (%d Online, %d Offline, %d Unknown) | **Total Gems teramati:** %d\n\n",
+                totalBots, onlineCount, offlineCount, unknownCount, totalGems)
+        else
+            header = string.format("🌐 **[Lucifer Global Dashboard]**\n**Total:** %d Bot (%d Online, %d Offline) | **Total Gems:** %d\n\n",
+                totalBots, onlineCount, offlineCount, totalGems)
+        end
         local body = header .. table.concat(lines, "\n")
         if #body > 1950 then
             body = body:sub(1, 1900) .. "\n... (dipotong karena batas pesan Discord)"
@@ -689,25 +833,50 @@ function M.new(bot, config, api)
         end
 
         local interval = tonumber(cfg.UPDATE_INTERVAL_SECONDS) or 15
-        local isGlobal = cfg.GLOBAL == true or cfg.ALL_BOTS == true
-        local getBotsFn = api.getBots or (type(getBots) == "function" and getBots)
+        local isGlobal = cfg.GLOBAL == true
+        -- Publish SELF before leader gate. Never enumerate native bot objects.
+        local phaseNow = rotationState()
+        if isGlobal then pcall(saveLocalStatus, phaseNow) end
         local allBots = nil
-        if isGlobal and type(getBotsFn) == "function" then
-            local okBots, resBots = pcall(getBotsFn)
-            if okBots and type(resBots) == "table" and #resBots > 0 then
-                allBots = resBots
+        if isGlobal then
+            local ok, names = pcall(discoverParticipants)
+            autoNames = ok and names or {}
+            if #autoNames == 0 and type(api.getBots) == "function" then
+                local okB, bots = pcall(api.getBots)
+                if okB and type(bots) == "table" then
+                    for _, b in ipairs(bots) do
+                        if b.name then autoNames[#autoNames + 1] = tostring(b.name) end
+                    end
+                end
+            end
+            if now() - startedAt < 10 and #autoNames == 0 then return end
+            if #autoNames == 0 then return end
+        end
+        if isGlobal then
+            if not isLeader(bot) then return end
+            allBots = {}
+            local seen = {}
+            for _, name in ipairs(autoNames) do
+                name = tostring(name)
+                if name:match("^[%w_%-]+$") and not seen[name] then
+                    seen[name] = true
+                    allBots[#allBots + 1] = {name = name}
+                end
             end
         end
 
-        if allBots and not isLeader(bot, allBots) then
-            return
-        end
-
-        local phaseNow = rotationState()
         if allBots then
             local phases = {}
             for _, b in ipairs(allBots) do
-                phases[#phases + 1] = tostring(b.name) .. ":" .. rotationState(b) .. ":" .. tostring(b.status)
+                local bName = tostring(b.name)
+                if bName == tostring(bot.name) then
+                    phases[#phases + 1] = bName .. ":" .. phaseNow .. ":" .. tostring(bot.status)
+                else
+                    local st = readRemoteBotStatus(bName)
+                    if st then
+                        phases[#phases + 1] = bName .. ":" .. tostring(st.rot) .. ":" .. (st.online and "1" or "0")
+                    end
+                end
             end
             phaseNow = table.concat(phases, "|")
         end
@@ -1056,6 +1225,113 @@ local function beginSpamRecovery()
     if bot.auto_spam then bot.auto_spam.enabled = false end
     print("[Spam] Recovery setelah pengobatan: AutoSpam OFF selama " .. tostring(seconds) .. " detik.")
 end
+-- Recovering guard: unknown is OFF. No guessed native mod fields.
+local recoveryStatus = { known = false, active = false, checking = false, nextCheck = 0 }
+local function parseRecoveringSeconds(text)
+    local body = text:lower():match("recovering%s*%((.-)%)")
+    if not body then return nil end
+    local h = tonumber(body:match("(%d+)%s*hour")) or 0
+    local m = tonumber(body:match("(%d+)%s*min")) or 0
+    local sec = tonumber(body:match("(%d+)%s*sec")) or 0
+    local total = h * 3600 + m * 60 + sec
+    if total <= 0 then return nil end
+    return total
+end
+-- Positive recognition only; unsupported entries keep the response UNKNOWN.
+local recognizedStatusMods = {
+    ["enhanced digging"] = true,
+    ["torn punching muscle"] = true, ["gem cuts"] = true,
+    ["chicken feet"] = true, ["grumbleteeth"] = true,
+}
+local function recoveryMessage(message)
+    if not recoveryStatus.checking or type(message) ~= "string" then return end
+    local text = message:match("msg|([^\r\n]*)")
+    if not text then return end
+    text = text:gsub("`.", ""):lower():match("^%s*(.-)%s*$")
+    local ok, name = pcall(function() return tostring(bot.name or ""):lower() end)
+    if text:find("'s status:", 1, true) then
+        recoveryStatus.header = ok and name ~= "" and text == name .. "'s status:"
+        recoveryStatus.expectedMods = nil
+        recoveryStatus.receivedMods = 0
+        recoveryStatus.seenMods = {}
+        recoveryStatus.known = recoveryStatus.active == true
+        return
+    end
+    if not recoveryStatus.header then return end
+    local count = text:match("^(%d+)%s+mods? active:%s*$") or text:match("^mods? active:%s*(%d+)%s*$")
+    if text == "no mods active" or text == "no mods active:" then count = "0" end
+    if count then
+        recoveryStatus.expectedMods = tonumber(count)
+        recoveryStatus.receivedMods = 0
+        recoveryStatus.seenMods = {}
+        recoveryStatus.known = recoveryStatus.active == true or tonumber(count) == 0
+        return
+    end
+    if text:match("^recovering%s*%(") then
+        recoveryStatus.active = true
+        recoveryStatus.known = true
+        local seconds = parseRecoveringSeconds(text)
+        recoveryStatus.untilTs = seconds and os.time() + seconds or nil
+        print("[Recovering] " .. text:sub(1,300))
+        return
+    end
+    if recoveryStatus.expectedMods and recognizedStatusMods[text] and not recoveryStatus.seenMods[text] then
+        recoveryStatus.seenMods[text] = true
+        recoveryStatus.receivedMods = recoveryStatus.receivedMods + 1
+    end
+end
+local recoveryEventsOK = pcall(function()
+    assert(type(addEvent) == "function" and type(listenEvents) == "function")
+    addEvent(Event.game_message, recoveryMessage)
+
+end)
+local function checkRecoveryStatus()
+    local now = os.time()
+    if bot.status ~= BotStatus.online then
+        recoveryStatus.known = false
+        recoveryStatus.checking = false
+        recoveryStatus.nextCheck = 0
+        return false
+    end
+    if not recoveryEventsOK then return false end
+    if not recoveryStatus.checking and now >= recoveryStatus.nextCheck then
+        recoveryStatus.known = false
+        recoveryStatus.active = false
+        recoveryStatus.header = false
+        recoveryStatus.expectedMods = nil
+        recoveryStatus.receivedMods = 0
+        recoveryStatus.seenMods = {}
+        recoveryStatus.untilTs = nil
+        recoveryStatus.checking = true
+        recoveryStatus.deadline = now + 8
+        recoveryStatus.nextCheck = now + 60
+        local ok = pcall(function()
+            if bot:isInWorld() then bot:say("/status") else error("outside world") end
+        end)
+        if not ok then recoveryStatus.checking = false end
+    end
+    if recoveryStatus.checking then
+        -- Bounded event pump; never install a second infinite loop/thread.
+        local ok = pcall(listenEvents, 1)
+        if not ok then recoveryStatus.known = false; recoveryStatus.checking = false end
+        if os.time() >= recoveryStatus.deadline then
+            recoveryStatus.checking = false
+            if recoveryStatus.header and recoveryStatus.expectedMods ~= nil and (recoveryStatus.receivedMods or 0) == recoveryStatus.expectedMods then
+                recoveryStatus.known = true
+                if not recoveryStatus.active then
+                    recoveryStatus.active = false
+                end
+            end
+            if recoveryStatus.active and recoveryStatus.untilTs then
+                recoveryStatus.nextCheck = recoveryStatus.untilTs
+            end
+            print("[Recovering] " .. (recoveryStatus.active and "aktif; AutoSpam OFF" or
+                (recoveryStatus.known and not recoveryStatus.active) and "bebas recovering (Recovering tidak aktif)" or "status belum terverifikasi; AutoSpam OFF"))
+        end
+    end
+    return not recoveryStatus.checking and recoveryStatus.known and not recoveryStatus.active
+end
+
 local lastSpamCheck = nil
 local function updateSpamState()
     -- Getter juga bisa melempar error di build ketat; dulu ini menghentikan
@@ -1069,9 +1345,14 @@ local function updateSpamState()
     end
     if bot.status ~= BotStatus.online then
         setSpam(false)
+        checkRecoveryStatus()
         lastSpamCheck = nil
         return
     end
+    -- Disable before requesting/pumping events; preserve ON between throttled checks.
+    if recoveryStatus.checking or not recoveryStatus.known or recoveryStatus.active or os.time() >= recoveryStatus.nextCheck then setSpam(false) end
+    local recoveryClear = checkRecoveryStatus()
+    if not recoveryClear then setSpam(false) end
     local now = os.time()
     if lastSpamCheck and now - lastSpamCheck < 5 then return end
     lastSpamCheck = now
@@ -1082,7 +1363,7 @@ local function updateSpamState()
         return bot.status == BotStatus.online and id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID")
     end)
     -- Preserve all owner-configured text, intervals and other spam options.
-    setSpam(cfg.ENABLED ~= false and ok and healthyOutsideHospital == true)
+    setSpam(cfg.ENABLED ~= false and recoveryClear and ok and healthyOutsideHospital == true)
 end
 
 local webhookMonitor = nil
@@ -1099,7 +1380,7 @@ local function getWebhookMonitor()
             end
         end
         if mod and type(mod.new) == "function" then
-            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, RotationStatus = RotationStatus, Webhook = Webhook, getBots = getBots, print = print })
+            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, RotationStatus = RotationStatus, Webhook = Webhook, io = io, print = print })
         end
     end
     return webhookMonitor
@@ -1452,9 +1733,23 @@ local function startupStage(name, fn)
     return result ~= false
 end
 -- Urutan penting: modul pesaing dimatikan lebih dulu dan WAJIB berhasil.
+local multi = CONFIG.MULTI_BOT
+local localIndex = tonumber(bot.index)
+local inRange = not multi or (localIndex and localIndex >= multi.startbot and localIndex <= multi.endbot)
+if not inRange then print("[Setup] Bot di luar rentang startbot/endbot; script dihentikan."); return end
+if multi then
+    print("[Setup] Menunggu slot startup index " .. tostring(localIndex))
+    sleep((localIndex - multi.startbot) * 5000)
+end
 local competingOK = startupStage("matikan modul pesaing", disableCompetingModules)
 local botSetupOK = startupStage("pengaturan bot opsional", applyOptionalBotSettings)
-local worldsSetupOK = startupStage("registrasi world", registerWorlds)
+-- Only one instance mutates WorldManager during multi-bot startup.
+local worldsSetupOK = true
+if not multi or localIndex == multi.startbot then
+    worldsSetupOK = startupStage("registrasi world", registerWorlds)
+else
+    print("[Setup] Registrasi world dilewati; hanya startbot yang mengubah WorldManager.")
+end
 local rotationSetupOK = startupStage("pengaturan rotasi", applyRotationSettings)
 -- Hanya penyiapan ROTASI yang boleh menentukan rotasi menyala. Kegagalan
 -- pengaturan bot (AutoWear/AutoTrash/AutoMalady yang tidak cocok dengan build
@@ -1545,12 +1840,26 @@ local hospitalPending = false -- Status pengobatan sedang berjalan/menunggu semb
 local shouldResumeAfterCure = false -- Intent apakah rotasi harus dinyalakan kembali pasca sembuh
 local intentionalStop = false
 local farmRunIntent = okStartup == true
+local gemWaitActive = false
+local gemWaitNextWarp = 0
+local function waitGemCutsWorld()
+    if bot.rotation then setRotationEnabled(false) end
+    if bot.status ~= BotStatus.online or lockoutTriggered then return end
+    local now = os.time()
+    if now < gemWaitNextWarp then return end
+    local ok, inside = pcall(function() return bot:isInWorld("luacid") end)
+    if ok and inside then return end
+    gemWaitNextWarp = now + 30
+    print("[Hospital] Gem Cuts setelah gagal surgery: menunggu malady hilang di luacid; rotasi OFF.")
+    pcall(function() bot:warp("luacid") end)
+end
+
 
 -- Melanjutkan farming setelah pengobatan. rotationConfirmedOn direset dulu:
 -- tanpa itu, kalau enable gagal / bot belum online, watchdog membaca
 -- "rotasi mati padahal pernah nyala" sebagai stop manual dan mengunci mati.
 local function resumeFarming(reason)
-    if intentionalStop or not bot.rotation then return false end
+    if intentionalStop or lockoutTriggered or bot.status ~= BotStatus.online or not bot.rotation then return false end
     rotationConfirmedOn = false
     if setRotationEnabled(true) and rotationIsOn() == true then
         rotationConfirmedOn = true
@@ -1565,7 +1874,6 @@ local function checkAndDispatchHospital()
     local mod = getHospitalModule()
     if not mod then return false end
 
-    -- Evaluasi status penyakit terkini
     local anySick, curId = false, 0
     if type(mod.hasAnyMalady) == "function" then
         anySick, curId = mod.hasAnyMalady(bot)
@@ -1574,6 +1882,16 @@ local function checkAndDispatchHospital()
     end
 
     -- Jika bot sudah benar-benar sembuh (anySick == false): bersihkan state pending
+    if gemWaitActive then
+        if anySick == false then
+            gemWaitActive = false
+            gemWaitNextWarp = 0
+        else
+            waitGemCutsWorld()
+            return false
+        end
+    end
+
     if anySick == false then
         if hospitalPending then
                     beginSpamRecovery()
@@ -1593,6 +1911,25 @@ local function checkAndDispatchHospital()
     end
 
     -- Jika data penyakit tidak valid / unknown: tahan rotasi dan jangan bersihkan pending
+    -- Gem Cuts never permits farming, including during Recovering.
+    if anySick == true and curId == 2 then
+        if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+        hospitalPending = true
+        if bot.rotation then setRotationEnabled(false) end
+    end
+    checkRecoveryStatus()
+    if recoveryStatus.active == true then
+        if anySick == true and curId == 1 then
+            hospitalPending = false
+            shouldResumeAfterCure = false
+            if farmRunIntent and not intentionalStop then
+                resumeFarming("Torn Punching Muscle + Recovering: pengobatan ditunda, rotasi dilanjutkan.")
+            end
+        end
+        return false
+    end
+    if not recoveryStatus.known or recoveryStatus.checking then return false end
+
     if anySick == "unknown" then
         if hospitalPending and bot.rotation then setRotationEnabled(false) end
         return false
@@ -1634,7 +1971,36 @@ local function checkAndDispatchHospital()
         setRotationEnabled(false)
     end
 
-    local status = mod.runCure(bot, updateWebhook)
+    if multi then
+        print("[Hospital] Menunggu slot admission index " .. tostring(localIndex))
+        sleep((localIndex - multi.startbot) * 10000)
+        if bot.status ~= BotStatus.online or lockoutTriggered then return false end
+        local stillNeeds, currentId = mod.checkNeedsHospital(bot)
+        if stillNeeds ~= true or (currentId ~= 1 and currentId ~= 2) then return false end
+    end
+    recoveryStatus.nextCheck = 0 -- obtain fresh surgery result during hospital wait
+    local status = mod.runCure(bot, updateWebhook, function()
+        checkRecoveryStatus()
+        return recoveryStatus.active == true
+    end)
+    if status == "recovering" then
+        local sick, id = mod.hasAnyMalady(bot)
+        if sick == true and id == 2 then
+            gemWaitActive = true
+            hospitalPending = true
+            waitGemCutsWorld()
+            return false
+        end
+        if sick == false or (sick == true and id == 1) then
+            hospitalPending = false
+            shouldResumeAfterCure = false
+            if farmRunIntent and not intentionalStop then resumeFarming("Pengobatan berakhir dengan Recovering; rotasi diizinkan untuk Healthy/Torn.") end
+        else
+            hospitalPending = true
+            if bot.rotation then setRotationEnabled(false) end
+        end
+        return false
+    end
 
     -- Resume rotasi bawaan HANYA jika bot benar-benar sembuh ("cured") dan online
     if status == "cured" then
