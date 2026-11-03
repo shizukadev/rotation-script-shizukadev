@@ -277,7 +277,9 @@ local function sendAdventureDoorPacket(b, tx, ty, btn)
     return false
 end
 
-function M.runCure(botCtx, onProgress, recoveryProbe)
+function M.runCure(botCtx, onProgress, recoveryProbe, hospitalWorld)
+    local TARGET_WORLD = hospitalWorld or "4AID"
+    if TARGET_WORLD ~= "4AID" and TARGET_WORLD ~= "BPJS" then return false end
     local b = botCtx or (type(getBot) == "function" and getBot())
     if not b then
         print("[Error] Bot context tidak ditemukan.")
@@ -291,8 +293,28 @@ function M.runCure(botCtx, onProgress, recoveryProbe)
         return false
     end
 
-    print(string.format("[Check] Terdeteksi penyakit ID %d (Torn Muscle / Gem Cuts). Memulai pengobatan ke 4AID...", mid))
+    print(string.format("[Check] Terdeteksi penyakit ID %d (Torn Muscle / Gem Cuts). Memulai pengobatan ke %s...", mid, TARGET_WORLD))
 
+    if TARGET_WORLD == "BPJS" then
+        if not warpTo(b, TARGET_WORLD) then return false end
+        local function door(x, y, button, destX, destY)
+            if not walkTo(b, x, y, TARGET_WORLD) then return false end
+            if not isHealthyState(b, TARGET_WORLD) then return false end
+            b:enter() -- no adventure-key hit in BPJS
+            sleep(500)
+            if not isHealthyState(b, TARGET_WORLD) then return false end
+            if not sendAdventureDoorPacket(b, x, y, button) then return false end
+            for _ = 1, 10 do
+                sleep(1000)
+                if not isHealthyState(b, TARGET_WORLD) then return false end
+                if b.x == destX and b.y == destY then return true end
+            end
+            print("[BPJS] Timeout konfirmasi perpindahan adventure door.")
+            return false
+        end
+        if not door(8, 20, "button3", 4, 18) then return false end
+        if not door(8, 18, "button0", 62, 29) then return false end
+    else
     local dialogReceived = false
     local function dialogCallback(varlist)
         if not varlist or type(varlist.get) ~= "function" then return end
@@ -404,8 +426,10 @@ function M.runCure(botCtx, onProgress, recoveryProbe)
     sleep(1000)
     cleanup()
 
-    print("[Step 4] Berjalan ke area operasi (66, 39)...")
-    if not walkTo(b, 66, 39, TARGET_WORLD) then
+    end
+    local bedX, bedY = TARGET_WORLD == "BPJS" and 73 or 66, 39
+    print(string.format("[Hospital] %s: menuju bed (%d,%d)", TARGET_WORLD, bedX, bedY))
+    if not walkTo(b, bedX, bedY, TARGET_WORLD) then
         print("[Error] Gagal findPath ke area operasi (66, 39) atau terputus.")
         return false
     end
@@ -416,7 +440,7 @@ function M.runCure(botCtx, onProgress, recoveryProbe)
     -- Read fresh malady state immediately on arrival, then every five seconds.
     while true do
         if type(onProgress) == "function" then
-            pcall(onProgress, "Menunggu sembuh di (66,39)")
+            pcall(onProgress, string.format("Menunggu sembuh di %s (%d,%d)", TARGET_WORLD, bedX, bedY))
         end
 
         if not isHealthyState(b, TARGET_WORLD) then
@@ -1245,6 +1269,7 @@ local recognizedStatusMods = {
 }
 local function recoveryMessage(message)
     if not recoveryStatus.checking or type(message) ~= "string" then return end
+    recoveryStatus.events = (recoveryStatus.events or 0) + 1
     local text = message:match("msg|([^\r\n]*)")
     if not text then return end
     text = text:gsub("`.", ""):lower():match("^%s*(.-)%s*$")
@@ -1307,6 +1332,7 @@ local function checkRecoveryStatus()
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
         recoveryStatus.untilTs = nil
+        recoveryStatus.events = 0
         recoveryStatus.checking = true
         recoveryStatus.deadline = now + 8
         recoveryStatus.nextCheck = now + 60
@@ -1331,7 +1357,7 @@ local function checkRecoveryStatus()
                 recoveryStatus.nextCheck = recoveryStatus.untilTs
             end
             print("[Recovering] " .. (recoveryStatus.active and "aktif; AutoSpam OFF" or
-                (recoveryStatus.known and not recoveryStatus.active) and "bebas recovering (Recovering tidak aktif)" or "status belum terverifikasi; AutoSpam OFF"))
+                (recoveryStatus.known and not recoveryStatus.active) and "bebas recovering (Recovering tidak aktif)" or string.format("status belum terverifikasi; AutoSpam OFF | bot=%s events=%s header=%s mods=%s/%s", tostring(bot.name), tostring(recoveryStatus.events or 0), tostring(recoveryStatus.header), tostring(recoveryStatus.receivedMods or 0), tostring(recoveryStatus.expectedMods))))
         end
     end
     return not recoveryStatus.checking and recoveryStatus.known and not recoveryStatus.active
@@ -1365,7 +1391,7 @@ local function updateSpamState()
     local ok, healthyOutsideHospital = pcall(function()
         if bot.status ~= BotStatus.online then return false end
         local id = tonumber(bot.malady)
-        return bot.status == BotStatus.online and id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID")
+        return bot.status == BotStatus.online and id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID") and not bot:isInWorld("BPJS")
     end)
     -- Preserve all owner-configured text, intervals and other spam options.
     setSpam(cfg.ENABLED ~= false and recoveryClear and ok and healthyOutsideHospital == true)
@@ -1874,6 +1900,13 @@ local function resumeFarming(reason)
     print("[Engine] Rotasi belum bisa dinyalakan setelah pengobatan; watchdog akan mencoba lagi.")
     return false
 end
+local function hospitalForLevel(level)
+    if type(level) ~= "number" or level ~= level or level == math.huge or level < 0 or level % 1 ~= 0 then return nil end
+    if level >= 36 then return "4AID" end
+    if level >= 12 then return "BPJS" end
+    return nil
+end
+
 local function checkAndDispatchHospital()
     if bot.status ~= BotStatus.online then return false end
     local mod = getHospitalModule()
@@ -1962,6 +1995,17 @@ local function checkAndDispatchHospital()
         return false
     end
 
+    local levelOK, currentLevel = pcall(function() return bot.level end)
+    local hospitalWorld = levelOK and hospitalForLevel(currentLevel) or nil
+    if not hospitalWorld then
+        if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+        hospitalPending = true
+        if bot.rotation then setRotationEnabled(false) end
+        lastHospitalAttempt = now
+        print("[Hospital] Level di bawah 12 atau tidak valid: pengobatan ditahan.")
+        return false
+    end
+
     lastHospitalAttempt = now
     -- Simpan intent resume saat pertama kali memasuki siklus pengobatan.
     -- Memakai niat farming, bukan bacaan toggle saat itu: kalau rotasi belum
@@ -1995,7 +2039,7 @@ local function checkAndDispatchHospital()
     local status = mod.runCure(bot, updateWebhook, function()
         checkRecoveryStatus()
         return recoveryStatus.active == true
-    end)
+    end, hospitalWorld)
     if status == "recovering" then
         local sick, id = mod.hasAnyMalady(bot)
         if sick == true and id == 2 then

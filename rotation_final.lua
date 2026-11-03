@@ -374,6 +374,7 @@ local recognizedStatusMods = {
 }
 local function recoveryMessage(message)
     if not recoveryStatus.checking or type(message) ~= "string" then return end
+    recoveryStatus.events = (recoveryStatus.events or 0) + 1
     local text = message:match("msg|([^\r\n]*)")
     if not text then return end
     text = text:gsub("`.", ""):lower():match("^%s*(.-)%s*$")
@@ -436,6 +437,7 @@ local function checkRecoveryStatus()
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
         recoveryStatus.untilTs = nil
+        recoveryStatus.events = 0
         recoveryStatus.checking = true
         recoveryStatus.deadline = now + 8
         recoveryStatus.nextCheck = now + 60
@@ -460,7 +462,7 @@ local function checkRecoveryStatus()
                 recoveryStatus.nextCheck = recoveryStatus.untilTs
             end
             print("[Recovering] " .. (recoveryStatus.active and "aktif; AutoSpam OFF" or
-                (recoveryStatus.known and not recoveryStatus.active) and "bebas recovering (Recovering tidak aktif)" or "status belum terverifikasi; AutoSpam OFF"))
+                (recoveryStatus.known and not recoveryStatus.active) and "bebas recovering (Recovering tidak aktif)" or string.format("status belum terverifikasi; AutoSpam OFF | bot=%s events=%s header=%s mods=%s/%s", tostring(bot.name), tostring(recoveryStatus.events or 0), tostring(recoveryStatus.header), tostring(recoveryStatus.receivedMods or 0), tostring(recoveryStatus.expectedMods))))
         end
     end
     return not recoveryStatus.checking and recoveryStatus.known and not recoveryStatus.active
@@ -487,7 +489,7 @@ local function updateSpamState()
     local ok, healthyOutsideHospital = pcall(function()
         if bot.status ~= BotStatus.online then return false end
         local id = tonumber(bot.malady)
-        return bot.status == BotStatus.online and id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID")
+        return bot.status == BotStatus.online and id == 0 and os.time() >= spamRecoveryUntil and not bot:isInWorld("4AID") and not bot:isInWorld("BPJS")
     end)
     -- Preserve all owner-configured text, intervals and other spam options.
     pcall(function() spamObj.enabled = cfg.ENABLED ~= false and recoveryClear and ok and healthyOutsideHospital == true end)
@@ -952,6 +954,13 @@ local function resumeFarming(reason)
     print("[Rotation Final] Rotasi belum bisa dinyalakan setelah pengobatan; watchdog akan mencoba lagi.")
     return false
 end
+local function hospitalForLevel(level)
+    if type(level) ~= "number" or level ~= level or level == math.huge or level < 0 or level % 1 ~= 0 then return nil end
+    if level >= 36 then return "4AID" end
+    if level >= 12 then return "BPJS" end
+    return nil
+end
+
 local function checkAndDispatchHospital()
     if bot.status ~= BotStatus.online then return false end
     local mod = getHospitalModule()
@@ -1036,6 +1045,17 @@ local function checkAndDispatchHospital()
         return false
     end
 
+    local levelOK, currentLevel = pcall(function() return bot.level end)
+    local hospitalWorld = levelOK and hospitalForLevel(currentLevel) or nil
+    if not hospitalWorld then
+        if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+        hospitalPending = true
+        if bot.rotation then setRotationEnabled(false) end
+        lastHospitalAttempt = now
+        print("[Hospital] Level di bawah 12 atau tidak valid: pengobatan ditahan.")
+        return false
+    end
+
     lastHospitalAttempt = now
     -- Niat farming, bukan bacaan toggle: rotasi bisa belum pernah menyala.
     if not hospitalPending then
@@ -1066,7 +1086,7 @@ local function checkAndDispatchHospital()
     local status = mod.runCure(bot, updateWebhook, function()
         checkRecoveryStatus()
         return recoveryStatus.active == true
-    end)
+    end, hospitalWorld)
     if status == "recovering" then
         local sick, id = mod.hasAnyMalady(bot)
         if sick == true and id == 2 then
