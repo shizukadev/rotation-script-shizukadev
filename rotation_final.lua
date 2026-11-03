@@ -170,6 +170,10 @@ local function waitOnline(timeout)
         end
         if updateWebhook then updateWebhook("Menunggu reconnect") end
         local reconCfg = CONFIG.AUTO_RECONNECT or {}
+        local lockoutEnabled = reconCfg.LOCKOUT_ENABLED ~= false and reconCfg.LOCKOUT ~= false
+        if not lockoutEnabled and lockoutTriggered then
+            lockoutTriggered = false
+        end
         local maxFailTries = reconCfg.MAX_FAIL_ATTEMPTS or 15
         local maxFailSecs = (reconCfg.MAX_FAIL_MINUTES or 5) * 60
         local now = os.time and os.time() or 0
@@ -177,7 +181,7 @@ local function waitOnline(timeout)
         -- Deteksi transisi status kegagalan login terminal:
         -- Dihitung 1 kali per transisi masuk ke status error terminal (logon_fail, error_connecting, too_many_login, server_overload, http_block)
         local curStatus = bot.status
-        if not lockoutTriggered and curStatus ~= BotStatus.online then
+        if lockoutEnabled and not lockoutTriggered and curStatus ~= BotStatus.online then
             if not loginFailStartTime then loginFailStartTime = now end
 
             -- Count only sampled attempt start followed by one terminal failure.
@@ -372,7 +376,7 @@ local function getWebhookMonitor()
             end
         end
         if mod and type(mod.new) == "function" then
-            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, RotationStatus = RotationStatus, Webhook = Webhook, print = print })
+            webhookMonitor = mod.new(bot, CONFIG, { os = os, BotStatus = BotStatus, RotationStatus = RotationStatus, Webhook = Webhook, getBots = getBots, print = print })
         end
     end
     return webhookMonitor

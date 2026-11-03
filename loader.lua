@@ -80,6 +80,7 @@ local CONFIG = {
         ENABLED = true,
         INTERVAL = 5,
         BYPASS_LOGON = true, -- Gunakan bypass logon saat login/reconnect
+        LOCKOUT_ENABLED = true, -- true = proteksi aktif (matikan reconnect jika gagal > 15x / > 5 menit); false = disable lockout (retry terus)
         MAX_FAIL_ATTEMPTS = 15, -- Matikan bypass & reconnect jika gagal login > 15x
         MAX_FAIL_MINUTES = 5, -- Matikan bypass & reconnect jika gagal login > 5 menit
     },
@@ -106,6 +107,7 @@ local CONFIG = {
         MESSAGE_ID = "", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
         UPDATE_INTERVAL_SECONDS = 15, -- jeda refresh dashboard
         PHASE_NOTIFY = false, -- true = kirim pesan tiap fase rotasi berubah (bisa ramai)
+        GLOBAL = false, -- true = satu dashboard global terpadu untuk semua bot jika beberapa/semua bot dijalankan bersamaan
     },
 
     -- Beli pack otomatis: rotasi Lucifer beli PackName saat gems mencapai PricePack,
