@@ -66,7 +66,10 @@ function M.new(bot, config, api)
         local usedEdit = dashboard and id ~= ""
         if dashboard and not usedEdit then
             if isGlobal then return false end
-            if messageId and messageId ~= "" then return false end
+            -- Single-bot tanpa ID: hanya SATU percobaan pembuatan pesan.
+            -- Hasil ambigu (tanpa ID) tidak boleh memicu pengiriman berulang.
+            if createAttempted then return false end
+            createAttempted = true
         end
 
         local hookUser = (dashboard and (cfg.GLOBAL == true or cfg.ALL_BOTS == true))
@@ -92,21 +95,30 @@ function M.new(bot, config, api)
                     error("Webhook:edit failed")
                 end
             else
-                hook:send()
-                if hook.message_id and tostring(hook.message_id) ~= "" then
-                    if dashboard then messageId = tostring(hook.message_id) end
+                local resSend = hook:send()
+                if resSend == false then
+                    deliverSuccess = false
+                    error("Webhook:send failed")
                 end
-                deliverSuccess = "confirmed"
+                local newId = hook.message_id
+                if newId and tostring(newId) ~= "" then
+                    if dashboard then messageId = tostring(newId) end
+                    deliverSuccess = "confirmed"
+                elseif dashboard then
+                    -- Terkirim tanpa ID: pemanggilan jalan, penerimaan tidak terbukti.
+                    deliverSuccess = "unconfirmed"
+                else
+                    deliverSuccess = "confirmed"
+                end
             end
         end)
 
         if ok and deliverSuccess then
-            -- Hanya cache sebagai lastBody jika edit terkonfirmasi (resEdit == true atau send baru)
-            -- Hasil unconfirmed (resEdit == nil) tidak dicache sebagai sukses permanen
+            -- Hanya cache lastBody saat terkonfirmasi; hasil unconfirmed dicoba lagi.
             if dashboard and deliverSuccess == "confirmed" then
                 lastBody = content
             end
-            return true
+            return deliverSuccess
         else
             if dashboard then retryAfter = now() + 15 end
             if api.print then api.print("[Webhook] Request failed; delivery unverified.") end
@@ -276,7 +288,12 @@ function M.new(bot, config, api)
                 if not dashLogged and api.print then
                     dashLogged = true
                     local modeDesc = allBots and string.format("global %d bot", #allBots) or "single bot"
-                    api.print("[Webhook] dashboard terkirim (" .. modeDesc .. ", " .. (messageId and ("edit id " .. tostring(messageId)) or "pesan baru") .. ")")
+                    local target = messageId and ("edit id " .. tostring(messageId)) or "pesan baru"
+                    if dashOk == "confirmed" then
+                        api.print("[Webhook] dashboard terkirim (" .. modeDesc .. ", " .. target .. ")")
+                    else
+                        api.print("[Webhook] dashboard terkirim tanpa konfirmasi (" .. modeDesc .. ", " .. target .. ")")
+                    end
                 end
             end
         end
