@@ -103,7 +103,7 @@ local CONFIG = {
     -- Webhook Live Monitor (webhook_edit)
     WEBHOOK = {
         ENABLED = true,
-        URL = "https://discord.com/api/webhooks/1565669831909580800/hHfE2snm8n9mRknmLdyGOeqsJqLeFdyE4SYvGYA7yMFrtD5qz93xWBHnN3MOwKGdupLw",
+        URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA", -- ganti dengan URL webhook Discord Anda (jangan di-commit ke publik)
         MESSAGE_ID = "1567025865047539856", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
         UPDATE_INTERVAL_SECONDS = 15, -- jeda refresh dashboard
         EVENT_NOTIFICATIONS = true, -- live dashboard only; true mengaktifkan pesan alert terpisah

@@ -104,7 +104,7 @@ local CONFIG = {
     -- Webhook Live Monitor (webhook_edit)
     WEBHOOK = {
         ENABLED = true,
-        URL = "https://discord.com/api/webhooks/1565669831909580800/hHfE2snm8n9mRknmLdyGOeqsJqLeFdyE4SYvGYA7yMFrtD5qz93xWBHnN3MOwKGdupLw",
+        URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA", -- ganti dengan URL webhook Discord Anda (jangan di-commit ke publik)
         MESSAGE_ID = "1567025865047539856", -- Jika diisi, bot akan edit pesan ini terus-menerus (Live Dashboard)
         UPDATE_INTERVAL_SECONDS = 15, -- jeda refresh dashboard
         EVENT_NOTIFICATIONS = true, -- live dashboard only; true mengaktifkan pesan alert terpisah
@@ -484,6 +484,8 @@ function M.new(bot, config, api)
             and not cfg.URL:find("MASUKKAN_URL", 1, true)
     end
 
+    local createAttempted = false
+
     local function deliver(content, dashboard)
         if not enabled() then return false end
         if not dashboard and cfg.EVENT_NOTIFICATIONS == false then return true end
@@ -499,7 +501,21 @@ function M.new(bot, config, api)
         end
 
         local id = messageId and tostring(messageId) or ""
+        local isGlobal = cfg.GLOBAL == true or cfg.ALL_BOTS == true
+
+        if dashboard and isGlobal and id == "" then
+            if not createAttempted and api.print then
+                createAttempted = true
+                api.print("[Webhook] Mode global WAJIB mengisi CONFIG.WEBHOOK.MESSAGE_ID agar pesan tidak duplikat.")
+            end
+            return false
+        end
+
         local usedEdit = dashboard and id ~= ""
+        if dashboard and not usedEdit then
+            if createAttempted then return false end
+            createAttempted = true
+        end
 
         local hookUser = (dashboard and (cfg.GLOBAL == true or cfg.ALL_BOTS == true))
             and "Lucifer Global Monitor"
@@ -663,6 +679,13 @@ function M.new(bot, config, api)
         end
 
         local phaseNow = rotationState()
+        if allBots then
+            local phases = {}
+            for _, b in ipairs(allBots) do
+                phases[#phases + 1] = tostring(b.name) .. ":" .. rotationState(b) .. ":" .. tostring(b.status)
+            end
+            phaseNow = table.concat(phases, "|")
+        end
         if phaseNow ~= lastPhase then
             if lastPhase ~= nil then
                 lastDashboard = nil

@@ -80,7 +80,7 @@ local CONFIG = {
 
     WEBHOOK = {
         ENABLED = true,
-        URL = "https://discord.com/api/webhooks/1565669831909580800/hHfE2snm8n9mRknmLdyGOeqsJqLeFdyE4SYvGYA7yMFrtD5qz93xWBHnN3MOwKGdupLw",
+        URL = "MASUKKAN_URL_WEBHOOK_DISCORD_ANDA", -- ganti dengan URL webhook Discord Anda (jangan di-commit ke publik)
         MESSAGE_ID = "1567025865047539856",
         UPDATE_INTERVAL_SECONDS = 15,
         EVENT_NOTIFICATIONS = true,
