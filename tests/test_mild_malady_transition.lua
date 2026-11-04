@@ -14,8 +14,8 @@ local function run(opts)
         BotStatus = { online = 1 },
         getHospitalModule = function()
             return {
-                hasAnyMalady = function() return true, opts.id or 3 end,
-                checkNeedsHospital = function() local id = opts.id or 3; return (id == 1 or id == 2), id end,
+                hasAnyMalady = function() return true, opts.id end,
+                checkNeedsHospital = function() local id = opts.id; return (id == 1 or id == 2), id end,
                 runCure = function() routed = routed + 1; return 'cured' end,
             }
         end,
@@ -77,5 +77,11 @@ assert(routed == 0, 'penyakit ringan tidak boleh dispatch')
 -- 8. Varian stop manual pada kondisi yang sama: tidak boleh menyalakan ulang.
 resumed = run({ id = 3, pending = true, active = true, known = true, shouldResume = true, manual = true })
 assert(resumed == 0, 'stop manual tetap dihormati saat Recovering aktif')
+
+-- 9. UNKNOWN (ID nil) + Recovering aktif: BUKAN izin resume.
+resumed, routed, _, pending = run({ id = nil, pending = true, active = true, known = true, shouldResume = true })
+assert(resumed == 0, 'UNKNOWN tidak boleh melepas jeda pengobatan')
+assert(pending == true, 'hospitalPending harus tetap ditahan saat malady UNKNOWN')
+assert(routed == 0, 'UNKNOWN tidak boleh dispatch')
 
 print('PASS transisi: Chicken Feet melepas jeda & resume (termasuk Recovering aktif, kecuali stop manual), Torn menunggu Recovering lalu ke 4AID')

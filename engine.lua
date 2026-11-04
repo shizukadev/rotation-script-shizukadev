@@ -962,6 +962,7 @@ local lastHospitalAttempt = 0
 local HOSPITAL_COOLDOWN = 180 -- Jeda 3 menit sebelum mengulang rute 4AID jika masih sakit
 local hospitalPending = false -- Status pengobatan sedang berjalan/menunggu sembuh
 local fourAidFails = 0       -- Kegagalan berturut-turut masuk 4AID (fallback ke BPJS)
+local nativeMaladyEpisode = false -- episode penyakit native (level <16) sudah tercatat
 local shouldResumeAfterCure = false -- Intent apakah rotasi harus dinyalakan kembali pasca sembuh
 local intentionalStop = false
 local farmRunIntent = okStartup == true
@@ -1027,6 +1028,20 @@ local function checkAndDispatchHospital()
     end
 
 
+    -- AutoMalady native (level <16): setelah penyakit hilang, pindah ke world
+    -- acak satu kali per episode supaya bot tidak menetap di world lama.
+    if anySick == false and nativeMaladyEpisode then
+        nativeMaladyEpisode = false
+        if type(bot.level) == "number" and bot.level < 16 then
+            local target = randomWorldName()
+            local okWarp = pcall(function() bot:warp(target) end)
+            print(string.format("[Hospital] %s: sembuh (native), pindah ke world acak %s (%s).",
+                tostring(bot.name), target, okWarp and "dikirim" or "gagal kirim"))
+        end
+    elseif type(curId) == "number" and curId > 0 then
+        nativeMaladyEpisode = true
+    end
+
     if anySick == false then
         if hospitalPending then
             beginSpamRecovery()
@@ -1051,8 +1066,10 @@ local function checkAndDispatchHospital()
     -- Hanya malady target (1/2) yang boleh menahan rotasi; penyakit ringan
     -- seperti Chicken Feet (ID 3) tidak boleh mematikan farming.
     local targetMalady = (curId == 1 or curId == 2)
+    -- Pelepasan jeda hanya untuk ID non-target yang VALID; UNKNOWN bukan izin.
+    local mildMalady = type(curId) == "number" and curId > 0 and not targetMalady
     if recoveryStatus.active == true then
-        if not targetMalady then
+        if mildMalady then
             if hospitalPending then
                 hospitalPending = false
                 print(string.format("[Hospital] %s: penyakit non-target (ID %s); jeda pengobatan dilepas.", tostring(bot and bot.name), tostring(curId)))
@@ -1135,7 +1152,7 @@ local function checkAndDispatchHospital()
     if needsCure ~= true or (mid ~= 1 and mid ~= 2) then
         -- Penyakit ringan / berubah jadi non-target: lepaskan jeda pengobatan
         -- dan lanjutkan farming sesuai intent, tanpa menimpa stop manual.
-        if hospitalPending then
+        if mildMalady and hospitalPending then
             hospitalPending = false
             print(string.format("[Hospital] %s: penyakit non-target (ID %s); jeda pengobatan dilepas.", tostring(bot and bot.name), tostring(curId)))
             if shouldResumeAfterCure and farmRunIntent and not intentionalStop then
@@ -1254,12 +1271,6 @@ local function checkAndDispatchHospital()
         fourAidFails = 0
         beginSpamRecovery()
         hospitalPending = false
-        if type(bot.level) == "number" and bot.level < 16 then
-            local target = randomWorldName()
-            local okWarp = pcall(function() bot:warp(target) end)
-            print(string.format("[Hospital] %s: sembuh, pindah ke world acak %s (%s).",
-                tostring(bot.name), target, okWarp and "dikirim" or "gagal kirim"))
-        end
         if shouldResumeAfterCure and bot.status == BotStatus.online then
             shouldResumeAfterCure = false
             local okResumed = resumeFarming("Pengobatan selesai (sembuh total). Rotasi bawaan dilanjutkan.")
