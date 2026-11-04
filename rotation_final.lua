@@ -969,6 +969,7 @@ end
 local lastHospitalAttempt = 0
 local HOSPITAL_COOLDOWN = 180 -- Jeda 3 menit sebelum mengulang rute 4AID jika masih sakit
 local hospitalPending = false -- Status pengobatan sedang berjalan/menunggu sembuh
+local fourAidFails = 0       -- Kegagalan berturut-turut masuk 4AID (fallback ke BPJS)
 local shouldResumeAfterCure = false -- Intent apakah rotasi harus dinyalakan kembali pasca sembuh
 local intentionalStop = false
 local farmRunIntent = okStartup == true
@@ -1000,10 +1001,12 @@ local function resumeFarming(reason)
     print("[Rotation Final] Rotasi belum bisa dinyalakan setelah pengobatan; watchdog akan mencoba lagi.")
     return false
 end
+-- 4AID tidak lagi dibatasi level: default untuk semua level >= 16.
+-- BPJS hanya dipakai sebagai fallback setelah 4AID gagal dimasuki berulang.
+local FOUR_AID_MAX_FAILS = 5
 local function hospitalForLevel(level)
     if type(level) ~= "number" or level ~= level or level == math.huge or level < 0 or level % 1 ~= 0 then return nil end
-    if level >= 36 then return "4AID" end
-    if level >= 16 then return "BPJS" end
+    if level >= 16 then return "4AID" end
     return nil
 end
 
@@ -1127,6 +1130,10 @@ local function checkAndDispatchHospital()
     if bot.level < 16 then return false end
     local levelOK, currentLevel = pcall(function() return bot.level end)
     local hospitalWorld = levelOK and hospitalForLevel(currentLevel) or nil
+    if hospitalWorld == "4AID" and fourAidFails > FOUR_AID_MAX_FAILS then
+        hospitalWorld = "BPJS"
+        print(string.format("[Hospital] 4AID gagal %d kali berturut-turut; beralih ke BPJS.", fourAidFails))
+    end
     if hospitalWorld == "BPJS" then
         -- Jeda rotasi dulu; level ini tidak boleh memakai rute 4AID.
         if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
@@ -1205,6 +1212,7 @@ local function checkAndDispatchHospital()
     end
 
     if status == "cured" then
+        fourAidFails = 0
         beginSpamRecovery()
         hospitalPending = false
         if shouldResumeAfterCure and bot.status == BotStatus.online then
@@ -1219,6 +1227,10 @@ local function checkAndDispatchHospital()
             return false
         end
     else
+        if hospitalWorld == "4AID" then
+            fourAidFails = fourAidFails + 1
+            print(string.format("[Hospital] Percobaan 4AID gagal (%d/%d).", fourAidFails, FOUR_AID_MAX_FAILS))
+        end
         if bot.rotation then setRotationEnabled(false) end
         return false
     end
