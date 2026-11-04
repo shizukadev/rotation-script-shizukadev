@@ -995,7 +995,7 @@ local function resumeFarming(reason)
     rotationConfirmedOn = false
     if setRotationEnabled(true) and rotationIsOn() == true then
         rotationConfirmedOn = true
-        print("[Rotation Final] " .. reason)
+        print(string.format("[Rotation Final] %s: %s", tostring(bot.name), reason))
         return true
     end
     print("[Rotation Final] Rotasi belum bisa dinyalakan setelah pengobatan; watchdog akan mencoba lagi.")
@@ -1061,8 +1061,9 @@ local function checkAndDispatchHospital()
     -- Hanya malady target (1/2) yang boleh menahan rotasi; penyakit ringan
     -- seperti Chicken Feet (ID 3) tidak boleh mematikan farming.
     local targetMalady = (curId == 1 or curId == 2)
-    if not recoveryClear then
+    if not recoveryClear and targetMalady then
         -- UNKNOWN / respons parsial / timeout: admission ditahan (fail-closed).
+        -- Penyakit ringan tidak melewati gate ini agar tidak ikut tertahan.
         if targetMalady then
             if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
             hospitalPending = true

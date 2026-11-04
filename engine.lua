@@ -988,7 +988,7 @@ local function resumeFarming(reason)
     rotationConfirmedOn = false
     if setRotationEnabled(true) and rotationIsOn() == true then
         rotationConfirmedOn = true
-        print("[Engine] " .. reason)
+        print(string.format("[Engine] %s: %s", tostring(bot.name), reason))
         return true
     end
     print("[Engine] Rotasi belum bisa dinyalakan setelah pengobatan; watchdog akan mencoba lagi.")
@@ -1056,8 +1056,9 @@ local function checkAndDispatchHospital()
     -- Hanya malady target (1/2) yang boleh menahan rotasi; penyakit ringan
     -- seperti Chicken Feet (ID 3) tidak boleh mematikan farming.
     local targetMalady = (curId == 1 or curId == 2)
-    if not recoveryClear then
+    if not recoveryClear and targetMalady then
         -- UNKNOWN / respons parsial / timeout: admission ditahan (fail-closed).
+        -- Penyakit ringan tidak melewati gate ini agar tidak ikut tertahan.
         if targetMalady then
             if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
             hospitalPending = true
@@ -1099,15 +1100,25 @@ local function checkAndDispatchHospital()
 
     if anySick == "unknown" then
         if hospitalPending and bot.rotation then setRotationEnabled(false) end
+        print(string.format("[Hospital] %s: status malady tidak terbaca; admission ditahan.", tostring(bot.name)))
         return false
     end
 
     -- Memeriksa apakah penyakit merupakan target pengobatan ke 4AID (ID 1 / ID 2)
     local needsCure, mid = mod.checkNeedsHospital(bot)
     if needsCure ~= true or (mid ~= 1 and mid ~= 2) then
-            if hospitalPending and bot.rotation then setRotationEnabled(false) end
-            return false
+        -- Penyakit ringan / berubah jadi non-target: lepaskan jeda pengobatan
+        -- dan lanjutkan farming sesuai intent, tanpa menimpa stop manual.
+        if hospitalPending then
+            hospitalPending = false
+            print(string.format("[Hospital] %s: penyakit non-target (ID %s); jeda pengobatan dilepas.", tostring(bot.name), tostring(curId)))
+            if shouldResumeAfterCure and farmRunIntent and not intentionalStop then
+                resumeFarming("Penyakit non-target; rotasi dilanjutkan sesuai intent.")
+            end
+            shouldResumeAfterCure = false
         end
+        return false
+    end
 
     local now = os.time and os.time() or 0
     if hospitalPending and (now - lastHospitalAttempt) < HOSPITAL_COOLDOWN then
