@@ -4,7 +4,7 @@
 
 local M = {}
 
-local TARGET_WORLD = "4AID"
+
 local CURE_TARGET_IDS = { [1] = true, [2] = true } -- 1: Torn Muscle, 2: Gem Cuts
 
 local MALADY_NAMES = {
@@ -50,16 +50,10 @@ function M.hasAnyMalady(botCtx)
     local b = botCtx or (type(getBot) == "function" and getBot())
     if not b then return "unknown" end
     local mid = M.resolveMaladyId(b)
-    if mid and mid > 0 then return true, mid end
-    if type(b.getMaladyDuration) == "function" then
-        local dur = b:getMaladyDuration()
-        if dur and dur > 0 then
-            return true, mid or 1
-        elseif dur == 0 and mid == 0 then
-            return false, 0
-        end
-    end
+    -- A positive duration is not a disease identifier: the host may retain
+    -- a timer after surgery. Never turn explicit Healthy ID 0 into sick ID 0.
     if mid == 0 then return false, 0 end
+    if mid and MALADY_NAMES[mid] and mid > 0 then return true, mid end
     return "unknown"
 end
 
@@ -166,7 +160,15 @@ function M.runCure(botCtx, onProgress, recoveryProbe, hospitalWorld)
     print(string.format("[Check] Terdeteksi penyakit ID %d (Torn Muscle / Gem Cuts). Memulai pengobatan ke %s...", mid, TARGET_WORLD))
 
     if TARGET_WORLD == "BPJS" then
-        if not warpTo(b, TARGET_WORLD) then return false end
+        -- World may be full: retry only while online, never walk before arrival.
+        while b.status == BotStatus.online and not b:isInWorld(TARGET_WORLD) do
+            b:warp(TARGET_WORLD)
+            sleep(4000)
+        end
+        if b.status ~= BotStatus.online or not b:isInWorld(TARGET_WORLD) then return false end
+        -- Confirm destination remains valid after arrival before starting the route.
+        sleep(1000)
+        if not isHealthyState(b, TARGET_WORLD) then return false end
         local function door(x, y, button, destX, destY)
             if not walkTo(b, x, y, TARGET_WORLD) then return false end
             if not isHealthyState(b, TARGET_WORLD) then return false end
@@ -297,7 +299,7 @@ function M.runCure(botCtx, onProgress, recoveryProbe, hospitalWorld)
     cleanup()
 
     end
-    local bedX, bedY = TARGET_WORLD == "BPJS" and 73 or 66, 39
+    local bedX, bedY = TARGET_WORLD == "BPJS" and 73 or 66, TARGET_WORLD == "BPJS" and 29 or 39
     print(string.format("[Hospital] %s: menuju bed (%d,%d)", TARGET_WORLD, bedX, bedY))
     if not walkTo(b, bedX, bedY, TARGET_WORLD) then
         print("[Error] Gagal findPath ke area operasi (66, 39) atau terputus.")
@@ -321,8 +323,14 @@ function M.runCure(botCtx, onProgress, recoveryProbe, hospitalWorld)
         -- /status is owner-requested refresh; say() acceptance is not proof
         -- that the server has updated malady. Keep valid-clearance checks.
         local refreshOK, recovering = pcall(function()
-            if type(recoveryProbe) == "function" then return recoveryProbe() end
-            b:say("/status")
+            if type(recoveryProbe) == "function" then
+                recoveryProbe("request")
+            elseif type(b.say) == "function" then
+                b:say("/status")
+            end
+            sleep(5000) -- allow asynchronous server status to arrive before API reads
+            if not isHealthyState(b, TARGET_WORLD) then error("hospital state changed") end
+            if type(recoveryProbe) == "function" then return recoveryProbe("read") end
             return false
         end)
         if refreshOK and recovering == true then
@@ -330,7 +338,8 @@ function M.runCure(botCtx, onProgress, recoveryProbe, hospitalWorld)
             return "recovering"
         end
         if not refreshOK then
-            print("[Hospital] Permintaan /status gagal; tetap menunggu data malady valid.")
+            print("[Hospital] Refresh /status gagal atau koneksi/world berubah; hentikan attempt tanpa klaim sembuh.")
+            return false
         end
         local anySick, curId = M.hasAnyMalady(b)
         print("[Hospital] Malady saat ini: ID=" .. tostring(curId) .. ", nama=" .. M.getMaladyName(curId) .. ", status=" .. tostring(anySick))
@@ -341,7 +350,7 @@ function M.runCure(botCtx, onProgress, recoveryProbe, hospitalWorld)
             print("[Warning] Status malady tidak valid/unknown, menunggu kepastian data...")
         end
 
-        sleep(5000)
+        -- Next cycle requests /status immediately; the wait is before API reads.
     end
 end
 

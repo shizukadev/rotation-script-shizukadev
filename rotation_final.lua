@@ -381,16 +381,18 @@ local function recoveryMessage(message)
     local ok, name = pcall(function() return tostring(bot.name or ""):lower() end)
     if text:find("'s status:", 1, true) then
         recoveryStatus.header = ok and name ~= "" and text == name .. "'s status:"
+        recoveryStatus.foreign = not recoveryStatus.header
         recoveryStatus.expectedMods = nil
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
         recoveryStatus.known = recoveryStatus.active == true
         return
     end
-    if not recoveryStatus.header then return end
+    if recoveryStatus.foreign then return end
     local count = text:match("^(%d+)%s+mods? active:%s*$") or text:match("^mods? active:%s*(%d+)%s*$")
     if text == "no mods active" or text == "no mods active:" then count = "0" end
     if count then
+        recoveryStatus.header = true
         recoveryStatus.expectedMods = tonumber(count)
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
@@ -428,11 +430,15 @@ local function checkRecoveryStatus()
         recoveryStatus.nextCheck = 0
         return false
     end
-    if not recoveryEventsOK then return false end
+    if not recoveryEventsOK then
+        recoveryStatus.known = false
+        return false
+    end
     if not recoveryStatus.checking and now >= recoveryStatus.nextCheck then
         recoveryStatus.known = false
         recoveryStatus.active = false
         recoveryStatus.header = false
+        recoveryStatus.foreign = false
         recoveryStatus.expectedMods = nil
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
@@ -469,6 +475,25 @@ local function checkRecoveryStatus()
 end
 
 local lastSpamCheck = nil
+local function updateNativeMaladyForLevel()
+    local ok, result = pcall(function()
+        local level = bot.level
+        if type(level) ~= "number" or level ~= level or level < 0 or level % 1 ~= 0 then return false end
+        local native = bot.auto_malady
+        if not native then return false end
+        local low = level < 16
+        native.auto_grumbleteeth = low
+        native.auto_chicken_feet = low
+        native.enabled = true
+        return native.auto_grumbleteeth == low and native.auto_chicken_feet == low and native.enabled == true
+    end)
+    if not ok or result ~= true then
+        print("[AutoMalady] Level/native tidak terbaca; keputusan hospital ditahan (tidak ditebak).")
+        return false
+    end
+    return true
+end
+
 local function updateSpamState()
     local okObj, spamObj = pcall(function() return bot.auto_spam end)
     if not okObj or not spamObj then return end
@@ -973,24 +998,6 @@ local function checkAndDispatchHospital()
         anySick, curId = mod.checkNeedsHospital(bot)
     end
 
-    if gemWaitActive then
-        if anySick == false then
-            gemWaitActive = false
-            gemWaitNextWarp = 0
-        else
-            local recoveryClear = checkRecoveryStatus()
-            if recoveryClear and anySick == true and curId == 2 then
-                gemWaitActive = false
-                gemWaitNextWarp = 0
-                lastHospitalAttempt = 0 -- permit a new treatment after verified recovery expiry
-                print("[Hospital] Recovering hilang terverifikasi; Gem Cuts masih aktif, kembali ke 4AID.")
-            else
-                waitGemCutsWorld()
-                return false
-            end
-        end
-    end
-
     if anySick == false then
         if hospitalPending then
             beginSpamRecovery()
@@ -1009,15 +1016,16 @@ local function checkAndDispatchHospital()
         return false
     end
 
-    -- Gem Cuts never permits farming, including during Recovering.
-    if anySick == true and curId == 2 then
-        if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
-        hospitalPending = true
-        if bot.rotation then setRotationEnabled(false) end
-    end
-    checkRecoveryStatus()
+    -- Recovering: Torn boleh lanjut farming, Gem Cuts tetap ditahan.
+    local recoveryClear = checkRecoveryStatus()
     if recoveryStatus.active == true then
-        if anySick == true and curId == 1 then
+        if curId == 2 then
+            if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+            hospitalPending = true
+            if bot and bot.rotation then setRotationEnabled(false) end
+            return false
+        end
+        if not recoveryStatus.checking then
             hospitalPending = false
             shouldResumeAfterCure = false
             if farmRunIntent and not intentionalStop then
@@ -1026,7 +1034,46 @@ local function checkAndDispatchHospital()
         end
         return false
     end
-    if not recoveryStatus.known or recoveryStatus.checking then return false end
+    if not recoveryClear and recoveryStatus.known ~= false then
+        -- Status belum terverifikasi: admission ditahan, bukan dianggap bebas.
+        if anySick == true then
+            if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+            hospitalPending = true
+            if bot and bot.rotation then setRotationEnabled(false) end
+        end
+        return false
+    end
+
+    -- Evaluasi status penyakit terkini
+    if gemWaitActive then
+        if anySick == false then
+            gemWaitActive = false
+            gemWaitNextWarp = 0
+        else
+            local recoveryNow = checkRecoveryStatus()
+            if recoveryNow and anySick == true and curId == 2 then
+                gemWaitActive = false
+                gemWaitNextWarp = 0
+                lastHospitalAttempt = 0 -- permit a new treatment after verified recovery expiry
+                print("[Hospital] Recovering hilang terverifikasi; Gem Cuts masih aktif, kembali ke 4AID.")
+            else
+                waitGemCutsWorld()
+                return false
+            end
+        end
+    end
+
+    if anySick == false then
+        -- Healthy setelah menunggu: tidak ada yang perlu ditahan.
+        return false
+    end
+
+    -- Gem Cuts never permits farming, including during Recovering.
+    if anySick == true and curId == 2 then
+        if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+        hospitalPending = true
+        if bot.rotation then setRotationEnabled(false) end
+    end
 
     if anySick == "unknown" then
         if hospitalPending and bot.rotation then setRotationEnabled(false) end
@@ -1045,8 +1092,26 @@ local function checkAndDispatchHospital()
         return false
     end
 
+    -- Best effort: kegagalan setter native tidak boleh memblokir pengobatan.
+    updateNativeMaladyForLevel()
+    if type(bot.level) ~= "number" then
+        -- Level tak terbaca: jangan menebak rute, tapi tetap tahan rotasi.
+        if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+        hospitalPending = true
+        if bot.rotation then setRotationEnabled(false) end
+        lastHospitalAttempt = now
+        return false
+    end
+    -- Level <16 cukup ditangani AutoMalady native, tanpa perjalanan custom.
+    if bot.level < 16 then return false end
     local levelOK, currentLevel = pcall(function() return bot.level end)
     local hospitalWorld = levelOK and hospitalForLevel(currentLevel) or nil
+    if hospitalWorld == "BPJS" then
+        -- Jeda rotasi dulu; level ini tidak boleh memakai rute 4AID.
+        if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
+        hospitalPending = true
+        if bot.rotation then setRotationEnabled(false) end
+    end
     if not hospitalWorld then
         if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
         hospitalPending = true
@@ -1088,7 +1153,19 @@ local function checkAndDispatchHospital()
         return recoveryStatus.active == true
     end, hospitalWorld)
     if status == "recovering" then
-        local sick, id = mod.hasAnyMalady(bot)
+        -- /status is asynchronous: hasil operasi belum terbaca sampai server
+        -- menjawab. Minta, tunggu, lalu baca API hanya jika jawabannya terverifikasi.
+        recoveryStatus.nextCheck = 0
+        checkRecoveryStatus()
+        sleep(5000)
+        local sick, id
+        if recoveryStatus.known and not recoveryStatus.checking then
+            sick, id = mod.hasAnyMalady(bot)
+        else
+            hospitalPending = true
+            if bot.rotation then setRotationEnabled(false) end
+            return false
+        end
         if sick == true and id == 2 then
             gemWaitActive = true
             hospitalPending = true

@@ -226,13 +226,11 @@ function M.new(bot, config, api)
     end
 
     local function isLeader(myBot, allBots)
-        if range then return tonumber(myBot.index) == range.startbot end
-        -- Jika pengirim eksplisit diatur di config (LEADER_BOT), hanya bot itu yang mengirim
+        -- LEADER_BOT eksplisit menang atas index startbot.
         if cfg.LEADER_BOT and tostring(cfg.LEADER_BOT) ~= "" then
             return myBot.name == cfg.LEADER_BOT
         end
-        -- Tanpa LEADER_BOT eksplisit, setiap bot mengelola statusnya sendiri
-        -- (tidak ada klaim failover palsu tanpa shared memory/file lock terverifikasi)
+        if range then return tonumber(myBot.index) == range.startbot end
         return autoNames[1] == tostring(myBot.name)
     end
 
@@ -316,14 +314,8 @@ function M.new(bot, config, api)
                 i, bName, statusLabel, tostring(wName), tostring(rot), gems, maladyBadge)
         end
         local offlineCount = totalBots - onlineCount - unknownCount
-        local header
-        if unknownCount > 0 then
-            header = string.format("🌐 **[Lucifer Global Dashboard]**\n**Total:** %d Bot (%d Online, %d Offline, %d Unknown) | **Total Gems teramati:** %d\n\n",
-                totalBots, onlineCount, offlineCount, unknownCount, totalGems)
-        else
-            header = string.format("🌐 **[Lucifer Global Dashboard]**\n**Total:** %d Bot (%d Online, %d Offline) | **Total Gems:** %d\n\n",
-                totalBots, onlineCount, offlineCount, totalGems)
-        end
+        local header = string.format("🌐 **[Lucifer Global Dashboard]**\n**Total:** %d Bot (%d Online, %d Offline, %d Unknown) | **Total Gems:** %d\n\n",
+            totalBots, onlineCount, offlineCount, unknownCount, totalGems)
         local body = header .. table.concat(lines, "\n")
         if #body > 1950 then
             body = body:sub(1, 1900) .. "\n... (dipotong karena batas pesan Discord)"
@@ -386,7 +378,8 @@ function M.new(bot, config, api)
                     end
                 end
             end
-            if now() - startedAt < 10 and #autoNames == 0 then return end
+            -- Grace hanya relevan bila snapshot disk tersedia (menunggu peserta daftar).
+            if (api.io or (api.os and api.os.getenv)) and now() - startedAt < 10 then return end
             if #autoNames == 0 then return end
         end
         if isGlobal then
