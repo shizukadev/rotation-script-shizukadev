@@ -4,9 +4,9 @@ local f = assert(io.open('engine.lua')); local s = f:read('*a'):gsub('\r', ''); 
 local a = assert(s:find('local function hospitalForLevel', 1, true))
 local z = assert(s:find('local function checkAndDispatchHospital', a, true))
 local choose = assert(load(s:sub(a, z - 1) .. 'return hospitalForLevel'))()
-assert(choose(16) == '4AID' and choose(35) == '4AID' and choose(36) == '4AID' and choose(120) == '4AID',
-    'semua level >=16 harus memakai 4AID')
-assert(choose(15) == nil and choose(11) == nil, 'level <16 tetap tanpa rute custom')
+assert(choose(12) == '4AID' and choose(16) == '4AID' and choose(36) == '4AID' and choose(120) == '4AID',
+    'semua level valid harus memakai 4AID')
+assert(choose(1) == '4AID', 'level rendah pun memakai 4AID')
 assert(choose(nil) == nil and choose('36') == nil and choose(35.5) == nil and choose(0 / 0) == nil,
     'level invalid tidak ditebak')
 

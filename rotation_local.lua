@@ -1959,8 +1959,8 @@ end
 local FOUR_AID_MAX_FAILS = 5
 local function hospitalForLevel(level)
     if type(level) ~= "number" or level ~= level or level == math.huge or level < 0 or level % 1 ~= 0 then return nil end
-    if level >= 16 then return "4AID" end
-    return nil
+    -- 4AID terbuka untuk semua level; BPJS hanya fallback setelah gagal masuk.
+    return "4AID"
 end
 
 local function checkAndDispatchHospital()
@@ -2086,8 +2086,6 @@ local function checkAndDispatchHospital()
         lastHospitalAttempt = now
         return false
     end
-    -- Level <16 cukup ditangani AutoMalady native, tanpa perjalanan custom.
-    if bot.level < 16 then return false end
     local levelOK, currentLevel = pcall(function() return bot.level end)
     local hospitalWorld = levelOK and hospitalForLevel(currentLevel) or nil
     if hospitalWorld == "4AID" and fourAidFails > FOUR_AID_MAX_FAILS then
