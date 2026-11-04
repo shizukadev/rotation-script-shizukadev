@@ -1286,7 +1286,7 @@ local function recoveryMessage(message)
         return
     end
     if recoveryStatus.foreign then return end
-    local count = text:match("^(%d+)%s+mods? active:%s*$") or text:match("^mods? active:%s*(%d+)%s*$")
+    local count = text:match("^(%d+)%s+mods? active:?%s*$") or text:match("^mods? active:?%s*(%d+)%s*$")
     if text == "no mods active" or text == "no mods active:" then count = "0" end
     if count then
         recoveryStatus.header = true
@@ -1294,6 +1294,11 @@ local function recoveryMessage(message)
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
         recoveryStatus.known = recoveryStatus.active == true or tonumber(count) == 0
+        -- Daftar sudah lengkap (mis. "0 mods active"): tandai selesai, tetap
+        -- proses baris berikutnya dalam pump yang sama sebelum menyimpulkan.
+        if recoveryStatus.receivedMods == recoveryStatus.expectedMods then
+            recoveryStatus.complete = true
+        end
         return
     end
     if text:match("^recovering%s*%(") then
@@ -1319,6 +1324,7 @@ local recoveryEventsOK = pcall(function()
     addEvent(Event.game_message, recoveryMessage)
 
 end)
+local recoveryNoEventsLogged = false
 local function checkRecoveryStatus()
     local now = os.time()
     if bot.status ~= BotStatus.online then
@@ -1328,12 +1334,15 @@ local function checkRecoveryStatus()
         return false
     end
     if not recoveryEventsOK then
-        -- Build tanpa fasilitas event tidak bisa memantau Recovering sama sekali.
-        -- Nyatakan terverifikasi-bersih agar pengobatan tidak tertahan permanen;
-        -- respons parsial/timeout pada build normal tetap UNKNOWN dan ditahan.
-        recoveryStatus.known = true
+        -- Tidak ada fasilitas event: status TIDAK BISA diverifikasi. Jangan pernah
+        -- menganggapnya bebas Recovering; admission custom ditahan.
+        recoveryStatus.known = false
         recoveryStatus.checking = false
-        return true
+        if not recoveryNoEventsLogged then
+            recoveryNoEventsLogged = true
+            print("[Recovering] Event game_message tidak tersedia; status tidak dapat diverifikasi, admission hospital ditahan.")
+        end
+        return false
     end
     if not recoveryStatus.checking and now >= recoveryStatus.nextCheck then
         recoveryStatus.known = false
@@ -1345,6 +1354,7 @@ local function checkRecoveryStatus()
         recoveryStatus.seenMods = {}
         recoveryStatus.untilTs = nil
         recoveryStatus.events = 0
+        recoveryStatus.complete = false
         recoveryStatus.checking = true
         recoveryStatus.deadline = now + 8
         recoveryStatus.nextCheck = now + 60
@@ -1357,6 +1367,11 @@ local function checkRecoveryStatus()
         -- Bounded event pump; never install a second infinite loop/thread.
         local ok = pcall(listenEvents, 1)
         if not ok then recoveryStatus.known = false; recoveryStatus.checking = false end
+        if recoveryStatus.complete and recoveryStatus.checking then
+            -- Daftar mod lengkap diterima: verifikasi selesai tanpa menunggu deadline.
+            recoveryStatus.checking = false
+            recoveryStatus.known = true
+        end
         if os.time() >= recoveryStatus.deadline then
             recoveryStatus.checking = false
             if recoveryStatus.header and recoveryStatus.expectedMods ~= nil and (recoveryStatus.receivedMods or 0) == recoveryStatus.expectedMods then
@@ -1980,7 +1995,7 @@ local function checkAndDispatchHospital()
         end
         -- Hanya Torn (ID 1) yang boleh farming selama Recovering. ID nil hanya
         -- muncul pada potongan kode yang diuji terpisah, bukan dispatcher produksi.
-        if (curId == 1 or curId == nil) and not recoveryStatus.checking then
+        if curId == 1 and not recoveryStatus.checking then
             hospitalPending = false
             shouldResumeAfterCure = false
             if farmRunIntent and not intentionalStop then
