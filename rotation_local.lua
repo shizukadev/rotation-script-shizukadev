@@ -2013,9 +2013,12 @@ local function checkAndDispatchHospital()
         end
         return false
     end
+    -- Hanya malady target (1/2) yang boleh menahan rotasi; penyakit ringan
+    -- seperti Chicken Feet (ID 3) tidak boleh mematikan farming.
+    local targetMalady = (curId == 1 or curId == 2)
     if not recoveryClear then
         -- UNKNOWN / respons parsial / timeout: admission ditahan (fail-closed).
-        if anySick == true then
+        if targetMalady then
             if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
             hospitalPending = true
             if bot and bot.rotation then setRotationEnabled(false) end
