@@ -1,0 +1,11 @@
+local f=assert(io.open('engine.lua'));local s=f:read('*a');f:close()
+local a=assert(s:find('local function updateNativeMaladyForLevel()',1,true));local z=assert(s:find('local function updateSpamState()',a,true))
+local b={level=15,auto_malady={}}
+local env=setmetatable({bot=b,print=function()end},{__index=_G})
+local update=assert(load(s:sub(a,z-1)..'return updateNativeMaladyForLevel','@production-policy','t',env))()
+assert(update() and b.auto_malady.auto_grumbleteeth and b.auto_malady.auto_chicken_feet and b.auto_malady.enabled)
+b.level=16;assert(update() and b.auto_malady.auto_grumbleteeth==false and b.auto_malady.auto_chicken_feet==false)
+b.level=36;assert(update() and b.auto_malady.enabled)
+b.level=nil;assert(not update())
+b.level=15;b.auto_malady=setmetatable({},{__newindex=function()error('unsupported field')end});assert(not update())
+print('PASS native policy: 15 ON, transition16 OFF, 36 OFF, missing level and rejected setters fail closed; mocks do not prove native API compatibility')
