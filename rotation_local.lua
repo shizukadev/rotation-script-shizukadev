@@ -1290,6 +1290,8 @@ local function recoveryMessage(message)
     local count = text:match("^(%d+)%s+mods? active:?%s*$") or text:match("^mods? active:?%s*(%d+)%s*$")
     if text == "no mods active" or text == "no mods active:" then count = "0" end
     if count then
+        -- Count baru = konteks baru: completion lama tidak boleh dipertahankan.
+        recoveryStatus.complete = false
         recoveryStatus.expectedMods = tonumber(count)
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
