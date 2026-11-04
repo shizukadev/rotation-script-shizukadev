@@ -68,4 +68,14 @@ resumed, routed = run({ id = 1, pending = false, active = true, known = true, sh
 assert(routed == 0, 'Torn + Recovering tidak boleh dispatch')
 assert(resumed == 1, 'Torn + Recovering harus melanjutkan rotasi sesuai intent')
 
-print('PASS transisi: Chicken Feet melepas jeda & resume (kecuali stop manual), Torn menunggu Recovering lalu ke 4AID')
+-- 7. Jeda internal + Chicken Feet + Recovering AKTIF: jeda harus dilepas.
+resumed, routed, _, pending = run({ id = 3, pending = true, active = true, known = true, shouldResume = true })
+assert(resumed == 1, 'Chicken Feet + Recovering aktif setelah jeda harus resume, resumed=' .. resumed)
+assert(pending == false, 'hospitalPending harus dilepas walau Recovering aktif')
+assert(routed == 0, 'penyakit ringan tidak boleh dispatch')
+
+-- 8. Varian stop manual pada kondisi yang sama: tidak boleh menyalakan ulang.
+resumed = run({ id = 3, pending = true, active = true, known = true, shouldResume = true, manual = true })
+assert(resumed == 0, 'stop manual tetap dihormati saat Recovering aktif')
+
+print('PASS transisi: Chicken Feet melepas jeda & resume (termasuk Recovering aktif, kecuali stop manual), Torn menunggu Recovering lalu ke 4AID')

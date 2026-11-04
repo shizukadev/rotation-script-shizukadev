@@ -997,6 +997,17 @@ end
 -- 4AID tidak lagi dibatasi level: default untuk semua level >= 16.
 -- BPJS hanya dipakai sebagai fallback setelah 4AID gagal dimasuki berulang.
 local FOUR_AID_MAX_FAILS = 5
+-- Bot yang memakai AutoMalady native (level <16) dipindah ke world acak
+-- setelah sembuh, supaya tidak menetap di world rumah sakit.
+local RANDOM_WORLD_LEN = 5
+local RANDOM_WORLD_MIN_LEVEL = 16
+local function randomWorldName()
+    local out = {}
+    for i = 1, RANDOM_WORLD_LEN do
+        out[i] = string.char(65 + math.random(0, 25))
+    end
+    return table.concat(out)
+end
 local function hospitalForLevel(level)
     if type(level) ~= "number" or level ~= level or level == math.huge or level < 0 or level % 1 ~= 0 then return nil end
     -- 4AID terbuka untuk semua level; BPJS hanya fallback setelah gagal masuk.
@@ -1014,6 +1025,7 @@ local function checkAndDispatchHospital()
     else
         anySick, curId = mod.checkNeedsHospital(bot)
     end
+
 
     if anySick == false then
         if hospitalPending then
@@ -1035,7 +1047,22 @@ local function checkAndDispatchHospital()
 
     -- Recovering: Torn boleh lanjut farming, Gem Cuts tetap ditahan.
     local recoveryClear = checkRecoveryStatus()
+
+    -- Hanya malady target (1/2) yang boleh menahan rotasi; penyakit ringan
+    -- seperti Chicken Feet (ID 3) tidak boleh mematikan farming.
+    local targetMalady = (curId == 1 or curId == 2)
     if recoveryStatus.active == true then
+        if not targetMalady then
+            if hospitalPending then
+                hospitalPending = false
+                print(string.format("[Hospital] %s: penyakit non-target (ID %s); jeda pengobatan dilepas.", tostring(bot and bot.name), tostring(curId)))
+                if shouldResumeAfterCure and farmRunIntent and not intentionalStop then
+                    resumeFarming("Penyakit non-target; rotasi dilanjutkan sesuai intent.")
+                end
+                shouldResumeAfterCure = false
+            end
+            return false
+        end
         if curId == 2 then
             if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
             hospitalPending = true
@@ -1055,7 +1082,6 @@ local function checkAndDispatchHospital()
     end
     -- Hanya malady target (1/2) yang boleh menahan rotasi; penyakit ringan
     -- seperti Chicken Feet (ID 3) tidak boleh mematikan farming.
-    local targetMalady = (curId == 1 or curId == 2)
     if not recoveryClear and targetMalady then
         -- UNKNOWN / respons parsial / timeout: admission ditahan (fail-closed).
         -- Penyakit ringan tidak melewati gate ini agar tidak ikut tertahan.
@@ -1111,7 +1137,7 @@ local function checkAndDispatchHospital()
         -- dan lanjutkan farming sesuai intent, tanpa menimpa stop manual.
         if hospitalPending then
             hospitalPending = false
-            print(string.format("[Hospital] %s: penyakit non-target (ID %s); jeda pengobatan dilepas.", tostring(bot.name), tostring(curId)))
+            print(string.format("[Hospital] %s: penyakit non-target (ID %s); jeda pengobatan dilepas.", tostring(bot and bot.name), tostring(curId)))
             if shouldResumeAfterCure and farmRunIntent and not intentionalStop then
                 resumeFarming("Penyakit non-target; rotasi dilanjutkan sesuai intent.")
             end
@@ -1228,6 +1254,12 @@ local function checkAndDispatchHospital()
         fourAidFails = 0
         beginSpamRecovery()
         hospitalPending = false
+        if type(bot.level) == "number" and bot.level < 16 then
+            local target = randomWorldName()
+            local okWarp = pcall(function() bot:warp(target) end)
+            print(string.format("[Hospital] %s: sembuh, pindah ke world acak %s (%s).",
+                tostring(bot.name), target, okWarp and "dikirim" or "gagal kirim"))
+        end
         if shouldResumeAfterCure and bot.status == BotStatus.online then
             shouldResumeAfterCure = false
             local okResumed = resumeFarming("Pengobatan selesai (sembuh total). Rotasi bawaan dilanjutkan.")
