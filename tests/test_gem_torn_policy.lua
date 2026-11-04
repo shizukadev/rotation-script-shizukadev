@@ -3,7 +3,7 @@ local a=assert(s:find('local function checkAndDispatchHospital()',1,true));local
 local function run(id,manual)
  local enabled=true;local calls=0
  local mod={hasAnyMalady=function()return true,id end,checkNeedsHospital=function()return true,id end,runCure=function()error('hospital forbidden during Recovering')end}
- local env=setmetatable({bot={status=1,rotation={}},BotStatus={online=1},getHospitalModule=function()return mod end,recoveryStatus={active=true,known=true,checking=false},checkRecoveryStatus=function()return false end,hospitalPending=true,farmRunIntent=true,intentionalStop=manual,setRotationEnabled=function(v)enabled=v end,resumeFarming=function()if not manual then calls=calls+1;enabled=true end end},{__index=_G})
+ local env=setmetatable({bot={status=1,rotation={}},BotStatus={online=1},getHospitalModule=function()return mod end,recoveryStatus={active=true,known=true,checking=false},checkRecoveryStatus=function()return false end,hospitalPending=true,farmRunIntent=true,intentionalStop=manual,setRotationEnabled=function(v)enabled=v end,waitGemCutsWorld=function()end,gemWaitActive=false,gemWaitNextWarp=0,resumeFarming=function()if not manual then calls=calls+1;enabled=true end end},{__index=_G})
  assert(load(src,'@production-policy','t',env))()()
  return calls,enabled,env.hospitalPending
 end

@@ -140,4 +140,65 @@ end
 w = runOptsOff()
 assert(#w == 0, 'opsi native mati tidak boleh memicu warp, dapat ' .. #w)
 
+local function runWithMaladyField(autoMalady, steps)
+    local warps, i = {}, 0
+    local env = setmetatable({
+        bot = { status = 1, rotation = {}, level = 12, name = 'BOT_FLD',
+                auto_malady = autoMalady,
+                say = function() end, isInWorld = function() return true end,
+                warp = function(_, w) warps[#warps + 1] = w end },
+        BotStatus = { online = 1 },
+        getHospitalModule = function()
+            return {
+                hasAnyMalady = function()
+                    i = i + 1
+                    local step = steps[i] or { healthy = true }
+                    if step.healthy then return false, 0 end
+                    return true, step.sick
+                end,
+                checkNeedsHospital = function()
+                    local step = steps[i] or { healthy = true }
+                    local id = step.sick
+                    return (id == 1 or id == 2), id
+                end,
+                runCure = function() return 'cured' end,
+            }
+        end,
+        checkRecoveryStatus = function() return true end,
+        recoveryStatus = { active = false, known = true, checking = false },
+        hospitalPending = false, shouldResumeAfterCure = true,
+        farmRunIntent = true, intentionalStop = false,
+        beginSpamRecovery = function() end, resumeFarming = function() return true end,
+        setRotationEnabled = function() end, updateNativeMaladyForLevel = function() return true end,
+        randomWorldName = gen, RANDOM_WORLD_LEN = 5,
+        hospitalForLevel = function() return '4AID' end, FOUR_AID_MAX_FAILS = 5, fourAidFails = 0,
+        nativeMaladyEpisode = false,
+        updateWebhook = function() end, sendWebhookNotification = function() end,
+        HOSPITAL_COOLDOWN = 0, lastHospitalAttempt = 0,
+        os = { time = function() return 1000 end }, print = function() end,
+    }, { __index = _G })
+    local fn = assert(load(code, '@random-world', 't', env))()
+    for _ = 1, #steps do fn() end
+    return warps
+end
+
+-- 10. Field native hilang (nil) bukan berarti aktif.
+w = runWithMaladyField({}, { { sick = 3 }, { healthy = true } })
+assert(#w == 0, 'field native hilang tidak boleh memicu warp, dapat ' .. #w)
+
+-- 11. Getter field melempar error -> tidak dianggap episode.
+local throwing = setmetatable({}, { __index = function() error('host menolak field') end })
+w = runWithMaladyField(throwing, { { sick = 3 }, { healthy = true } })
+assert(#w == 0, 'getter yang melempar error tidak boleh memicu warp, dapat ' .. #w)
+
+-- 12. Opsi eksplisit false -> tidak dianggap episode.
+w = runWithMaladyField({ enabled = true, auto_chicken_feet = false, auto_grumbleteeth = false },
+    { { sick = 3 }, { healthy = true } })
+assert(#w == 0, 'opsi native OFF tidak boleh memicu warp, dapat ' .. #w)
+
+-- 13. Nilai aktif eksplisit true -> tetap warp.
+w = runWithMaladyField({ enabled = true, auto_chicken_feet = true, auto_grumbleteeth = true },
+    { { sick = 3 }, { healthy = true } })
+assert(#w == 1, 'opsi native ON harus memicu warp, dapat ' .. #w)
+
 print('PASS world acak: hanya penyakit native level <16, sekali per episode, hormati stop manual/intent')

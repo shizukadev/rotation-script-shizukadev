@@ -1994,10 +1994,16 @@ local function checkAndDispatchHospital()
     local nativeLevel = type(bot.level) == "number" and bot.level < 16
     local nativeDisease = false
     if nativeLevel then
-        local okOpt, opt = pcall(function() return bot.auto_malady end)
-        if okOpt and type(opt) == "table" and opt.enabled ~= false then
-            if curId == 3 and opt.auto_chicken_feet ~= false then nativeDisease = true end
-            if curId == 4 and opt.auto_grumbleteeth ~= false then nativeDisease = true end
+        -- Semua pembacaan field native dibungkus satu pcall; field yang tidak ada
+        -- (nil) BUKAN berarti aktif. Hanya nilai true yang dihitung.
+        local okOpt, enabled, chicken, grumble = pcall(function()
+            local opt = bot.auto_malady
+            if opt == nil then return false, false, false end
+            return opt.enabled == true, opt.auto_chicken_feet == true, opt.auto_grumbleteeth == true
+        end)
+        if okOpt and enabled == true then
+            if curId == 3 and chicken == true then nativeDisease = true end
+            if curId == 4 and grumble == true then nativeDisease = true end
         end
     end
     if nativeDisease then
@@ -2056,9 +2062,12 @@ local function checkAndDispatchHospital()
             return false
         end
         if curId == 2 then
+            -- Gem Cuts + Recovering (gagal surgery): tunggu di luacid, bukan ke 4AID.
             if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
             hospitalPending = true
+            gemWaitActive = true
             if bot and bot.rotation then setRotationEnabled(false) end
+            if not intentionalStop then waitGemCutsWorld() end
             return false
         end
         -- Hanya Torn (ID 1) yang boleh farming selama Recovering. ID nil hanya
