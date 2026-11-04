@@ -1035,18 +1035,24 @@ local function checkAndDispatchHospital()
     end
 
 
-    -- AutoMalady native (level <16): setelah penyakit hilang, pindah ke world
-    -- acak satu kali per episode supaya bot tidak menetap di world lama.
+    -- AutoMalady native (level <16) hanya menangani Chicken Feet (3) dan
+    -- Grumbleteeth (4). Setelah penyakit itu hilang, pindah ke world acak satu
+    -- kali per episode; penyakit target custom tidak memicu perpindahan.
+    local nativeLevel = type(bot.level) == "number" and bot.level < 16
+    if nativeLevel and (curId == 3 or curId == 4) then
+        nativeMaladyEpisode = true
+    elseif targetMalady then
+        nativeMaladyEpisode = false
+    end
     if anySick == false and nativeMaladyEpisode then
         nativeMaladyEpisode = false
-        if type(bot.level) == "number" and bot.level < 16 then
+        -- Jangan bepergian otomatis saat owner stop atau intent farming hilang.
+        if nativeLevel and farmRunIntent and not intentionalStop and bot.status == BotStatus.online then
             local target = randomWorldName()
             local okWarp = pcall(function() bot:warp(target) end)
             print(string.format("[Hospital] %s: sembuh (native), pindah ke world acak %s (%s).",
                 tostring(bot.name), target, okWarp and "dikirim" or "gagal kirim"))
         end
-    elseif type(curId) == "number" and curId > 0 then
-        nativeMaladyEpisode = true
     end
 
     if anySick == false then

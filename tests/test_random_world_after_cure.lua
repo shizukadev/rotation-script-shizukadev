@@ -1,4 +1,5 @@
--- World acak 5 huruf dipicu transisi penyakit native (level <16) menjadi Healthy.
+-- World acak 5 huruf hanya untuk penyakit native (Chicken Feet/Grumbleteeth),
+-- level <16, sekali per episode, dan tidak saat stop manual.
 local f = assert(io.open('engine.lua')); local s = f:read('*a'):gsub('\r', ''); f:close()
 
 local a = assert(s:find('local RANDOM_WORLD_LEN', 1, true))
@@ -7,41 +8,47 @@ local gen = assert(load(s:sub(a, z - 1) .. '\nreturn randomWorldName'))()
 
 for _ = 1, 200 do
     local name = gen()
-    assert(#name == 5, 'nama world harus 5 huruf, dapat ' .. tostring(name))
-    assert(name:match('^[A-Z]+$'), 'nama world harus huruf besar, dapat ' .. tostring(name))
+    assert(#name == 5 and name:match('^[A-Z]+$'), 'nama world harus 5 huruf besar: ' .. tostring(name))
 end
 local seen, n = {}, 0
 for _ = 1, 50 do seen[gen()] = true end
 for _ in pairs(seen) do n = n + 1 end
-assert(n > 1, 'generator tidak boleh selalu menghasilkan nama sama')
+assert(n > 1, 'generator tidak boleh konstan')
 
 local d = assert(s:find('local function checkAndDispatchHospital()', 1, true))
 local e = assert(s:find('\nlocal farmLabel', d, true))
 local code = s:sub(d, e - 1) .. '\nreturn checkAndDispatchHospital'
 
--- urutan hasil hasAnyMalady: true,id  ->  false,0
-local function run(level, sickId, healthyAfter)
-    local warped, calls = nil, 0
+-- steps: daftar {sick=id} atau {healthy=true}
+local function run(level, steps, opts)
+    opts = opts or {}
+    local warps, i = {}, 0
     local env = setmetatable({
         bot = { status = 1, rotation = {}, level = level, name = 'BOT_LVL',
                 say = function() end, isInWorld = function() return true end,
-                warp = function(_, w) warped = w end },
+                warp = function(_, w) warps[#warps + 1] = w end },
         BotStatus = { online = 1 },
         getHospitalModule = function()
             return {
                 hasAnyMalady = function()
-                    calls = calls + 1
-                    if calls <= healthyAfter then return true, sickId end
-                    return false, 0
+                    i = i + 1
+                    local step = steps[i] or { healthy = true }
+                    if step.healthy then return false, 0 end
+                    return true, step.sick
                 end,
-                checkNeedsHospital = function() return false, sickId end,
+                checkNeedsHospital = function()
+                    local step = steps[i] or { healthy = true }
+                    local id = step.sick
+                    return (id == 1 or id == 2), id
+                end,
                 runCure = function() return 'cured' end,
             }
         end,
         checkRecoveryStatus = function() return true end,
         recoveryStatus = { active = false, known = true, checking = false },
         hospitalPending = false, shouldResumeAfterCure = true,
-        farmRunIntent = true, intentionalStop = false,
+        farmRunIntent = opts.intent ~= false,
+        intentionalStop = opts.manual == true,
         beginSpamRecovery = function() end,
         resumeFarming = function() return true end,
         setRotationEnabled = function() end,
@@ -55,19 +62,37 @@ local function run(level, sickId, healthyAfter)
         print = function() end,
     }, { __index = _G })
     local fn = assert(load(code, '@random-world', 't', env))()
-    for _ = 1, 3 do fn() end
-    return warped
+    for _ = 1, #steps do fn() end
+    return warps
 end
 
--- Sakit (Chicken Feet) lalu Healthy: warp sekali ke world acak 5 huruf.
-local warped = run(12, 3, 1)
-assert(warped and warped:match('^[A-Z][A-Z][A-Z][A-Z][A-Z]$'),
-    'level 12 harus warp ke world acak 5 huruf, dapat ' .. tostring(warped))
+-- 1. Chicken Feet -> Healthy, lalu Healthy berulang: tepat satu warp.
+local w = run(12, { { sick = 3 }, { healthy = true }, { healthy = true }, { healthy = true } })
+assert(#w == 1, 'harus tepat satu warp per episode, dapat ' .. #w)
+assert(w[1] and w[1]:match('^[A-Z][A-Z][A-Z][A-Z][A-Z]$'), 'tujuan harus 5 huruf besar')
 
--- Level >=16 tidak dipindah walau sembuh dari penyakit native.
-assert(run(40, 3, 1) == nil, 'level >=16 tidak boleh dipindah ke world acak')
+-- 2. Episode kedua memicu warp kedua.
+w = run(12, { { sick = 3 }, { healthy = true }, { sick = 4 }, { healthy = true } })
+assert(#w == 2, 'episode kedua harus warp lagi, dapat ' .. #w)
 
--- Selalu Healthy: tidak ada episode, tidak ada warp.
-assert(run(12, 3, 0) == nil, 'tanpa episode penyakit tidak boleh warp')
+-- 3. Torn (custom hospital) tidak memicu warp.
+w = run(12, { { sick = 1 }, { healthy = true }, { healthy = true } })
+assert(#w == 0, 'penyakit target custom tidak boleh memicu world acak, dapat ' .. #w)
 
-print('PASS world acak 5 huruf: transisi native sakit -> Healthy pada level <16, sekali per episode')
+-- 4. Stop manual: tidak ada warp.
+w = run(12, { { sick = 3 }, { healthy = true } }, { manual = true })
+assert(#w == 0, 'stop manual tidak boleh memicu warp')
+
+-- 5. Intent farming hilang: tidak ada warp.
+w = run(12, { { sick = 3 }, { healthy = true } }, { intent = false })
+assert(#w == 0, 'tanpa intent farming tidak boleh warp')
+
+-- 6. Level >=16: tidak ada warp.
+w = run(40, { { sick = 3 }, { healthy = true } })
+assert(#w == 0, 'level >=16 tidak boleh dipindah')
+
+-- 7. Healthy tanpa episode: tidak ada warp.
+w = run(12, { { healthy = true }, { healthy = true } })
+assert(#w == 0, 'tanpa episode penyakit tidak boleh warp')
+
+print('PASS world acak: hanya penyakit native level <16, sekali per episode, hormati stop manual/intent')
