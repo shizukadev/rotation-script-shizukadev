@@ -1992,9 +1992,18 @@ local function checkAndDispatchHospital()
     -- Grumbleteeth (4). Setelah penyakit itu hilang, pindah ke world acak satu
     -- kali per episode; penyakit target custom tidak memicu perpindahan.
     local nativeLevel = type(bot.level) == "number" and bot.level < 16
-    if nativeLevel and (curId == 3 or curId == 4) then
+    local nativeDisease = false
+    if nativeLevel then
+        local okOpt, opt = pcall(function() return bot.auto_malady end)
+        if okOpt and type(opt) == "table" and opt.enabled ~= false then
+            if curId == 3 and opt.auto_chicken_feet ~= false then nativeDisease = true end
+            if curId == 4 and opt.auto_grumbleteeth ~= false then nativeDisease = true end
+        end
+    end
+    if nativeDisease then
         nativeMaladyEpisode = true
-    elseif targetMalady then
+    elseif curId == 1 or curId == 2 then
+        -- Beralih ke pengobatan custom: batalkan episode native yang tertunda.
         nativeMaladyEpisode = false
     end
     if anySick == false and nativeMaladyEpisode then

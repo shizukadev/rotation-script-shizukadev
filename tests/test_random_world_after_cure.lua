@@ -25,6 +25,7 @@ local function run(level, steps, opts)
     local warps, i = {}, 0
     local env = setmetatable({
         bot = { status = 1, rotation = {}, level = level, name = 'BOT_LVL',
+                auto_malady = { enabled = true, auto_chicken_feet = true, auto_grumbleteeth = true },
                 say = function() end, isInWorld = function() return true end,
                 warp = function(_, w) warps[#warps + 1] = w end },
         BotStatus = { online = 1 },
@@ -94,5 +95,49 @@ assert(#w == 0, 'level >=16 tidak boleh dipindah')
 -- 7. Healthy tanpa episode: tidak ada warp.
 w = run(12, { { healthy = true }, { healthy = true } })
 assert(#w == 0, 'tanpa episode penyakit tidak boleh warp')
+
+-- 8. Chicken Feet -> Torn -> Healthy: episode native dibatalkan, tanpa warp.
+w = run(12, { { sick = 3 }, { sick = 1 }, { healthy = true }, { healthy = true } })
+assert(#w == 0, 'peralihan ke penyakit custom harus membatalkan episode native, dapat ' .. #w)
+
+-- 9. Opsi native dimatikan: tidak dianggap episode native.
+local function runOptsOff()
+    local warps, i = {}, 0
+    local env = setmetatable({
+        bot = { status = 1, rotation = {}, level = 12, name = 'BOT_OFF',
+                auto_malady = { enabled = true, auto_chicken_feet = false, auto_grumbleteeth = false },
+                say = function() end, isInWorld = function() return true end,
+                warp = function(_, x) warps[#warps + 1] = x end },
+        BotStatus = { online = 1 },
+        getHospitalModule = function()
+            return {
+                hasAnyMalady = function()
+                    i = i + 1
+                    if i == 1 then return true, 3 end
+                    return false, 0
+                end,
+                checkNeedsHospital = function() return false, 3 end,
+                runCure = function() return 'cured' end,
+            }
+        end,
+        checkRecoveryStatus = function() return true end,
+        recoveryStatus = { active = false, known = true, checking = false },
+        hospitalPending = false, shouldResumeAfterCure = true,
+        farmRunIntent = true, intentionalStop = false,
+        beginSpamRecovery = function() end, resumeFarming = function() return true end,
+        setRotationEnabled = function() end, updateNativeMaladyForLevel = function() return true end,
+        randomWorldName = gen, RANDOM_WORLD_LEN = 5,
+        hospitalForLevel = function() return '4AID' end, FOUR_AID_MAX_FAILS = 5, fourAidFails = 0,
+        nativeMaladyEpisode = false,
+        updateWebhook = function() end, sendWebhookNotification = function() end,
+        HOSPITAL_COOLDOWN = 0, lastHospitalAttempt = 0,
+        os = { time = function() return 1000 end }, print = function() end,
+    }, { __index = _G })
+    local fn = assert(load(code, '@random-world', 't', env))()
+    fn(); fn(); fn()
+    return warps
+end
+w = runOptsOff()
+assert(#w == 0, 'opsi native mati tidak boleh memicu warp, dapat ' .. #w)
 
 print('PASS world acak: hanya penyakit native level <16, sekali per episode, hormati stop manual/intent')
