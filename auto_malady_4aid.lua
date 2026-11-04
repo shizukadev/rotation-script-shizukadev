@@ -218,9 +218,11 @@ function M.runCure(botCtx, onProgress, recoveryProbe, hospitalWorld)
 
     print("[Step 1] Menuju world " .. TARGET_WORLD .. "...")
     if not warpTo(b, TARGET_WORLD) then
+        -- Gagal MASUK world (bukan gagal surgery): engine memakai penanda ini
+        -- untuk menghitung fallback ke BPJS.
         print("[Error] Gagal warp ke " .. TARGET_WORLD)
         cleanup()
-        return false
+        return "enter_failed"
     end
 
     print("[Step 1] Berjalan ke portal (22, 16)...")
@@ -328,7 +330,9 @@ function M.runCure(botCtx, onProgress, recoveryProbe, hospitalWorld)
             elseif type(b.say) == "function" then
                 b:say("/status")
             end
-            sleep(5000) -- allow asynchronous server status to arrive before API reads
+            -- Tunggu balasan /status seperlunya; bisa dipercepat lewat CONFIG.
+            local waitMs = tonumber(_G.CONFIG and _G.CONFIG.HOSPITAL_STATUS_WAIT_MS) or 5000
+            sleep(waitMs)
             if not isHealthyState(b, TARGET_WORLD) then error("hospital state changed") end
             if type(recoveryProbe) == "function" then return recoveryProbe("read") end
             return false

@@ -402,7 +402,7 @@ local function checkRecoveryStatus()
         recoveryStatus.events = 0
         recoveryStatus.complete = false
         recoveryStatus.checking = true
-        recoveryStatus.deadline = now + 8
+        recoveryStatus.deadline = now + 3 -- cukup untuk balasan /status; jangan blokir admission lama
         recoveryStatus.nextCheck = now + 60
         local ok = pcall(function()
             if bot:isInWorld() then bot:say("/status") else error("outside world") end
@@ -1170,7 +1170,7 @@ local function checkAndDispatchHospital()
 
     if multi then
         print("[Hospital] Menunggu slot admission index " .. tostring(localIndex))
-        sleep((localIndex - multi.startbot) * 10000)
+        sleep(math.min((localIndex - multi.startbot) * 10000, 10000))
         if bot.status ~= BotStatus.online or lockoutTriggered then return false end
         local stillNeeds, currentId = mod.checkNeedsHospital(bot)
         if stillNeeds ~= true or (currentId ~= 1 and currentId ~= 2) then return false end
@@ -1229,9 +1229,13 @@ local function checkAndDispatchHospital()
         end
     else
         -- Jika gagal atau belum sembuh, rotasi tetap ditahan mati
-        if hospitalWorld == "4AID" then
+        if status == "enter_failed" and hospitalWorld == "4AID" then
+            -- Hanya gagal MASUK world yang dihitung untuk fallback BPJS.
             fourAidFails = fourAidFails + 1
-            print(string.format("[Hospital] Percobaan 4AID gagal (%d/%d).", fourAidFails, FOUR_AID_MAX_FAILS))
+            print(string.format("[Hospital] Gagal masuk 4AID (%d/%d).", fourAidFails, FOUR_AID_MAX_FAILS))
+        elseif status ~= "recovering" then
+            -- Masuk berhasil (atau route berjalan): hitungan direset.
+            fourAidFails = 0
         end
         if bot.rotation then setRotationEnabled(false) end
         return false
