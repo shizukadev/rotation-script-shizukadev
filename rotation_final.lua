@@ -431,8 +431,12 @@ local function checkRecoveryStatus()
         return false
     end
     if not recoveryEventsOK then
-        recoveryStatus.known = false
-        return false
+        -- Build tanpa fasilitas event tidak bisa memantau Recovering sama sekali.
+        -- Nyatakan terverifikasi-bersih agar pengobatan tidak tertahan permanen;
+        -- respons parsial/timeout pada build normal tetap UNKNOWN dan ditahan.
+        recoveryStatus.known = true
+        recoveryStatus.checking = false
+        return true
     end
     if not recoveryStatus.checking and now >= recoveryStatus.nextCheck then
         recoveryStatus.known = false
@@ -982,7 +986,7 @@ end
 local function hospitalForLevel(level)
     if type(level) ~= "number" or level ~= level or level == math.huge or level < 0 or level % 1 ~= 0 then return nil end
     if level >= 36 then return "4AID" end
-    if level >= 12 then return "BPJS" end
+    if level >= 16 then return "BPJS" end
     return nil
 end
 
@@ -1025,7 +1029,7 @@ local function checkAndDispatchHospital()
             if bot and bot.rotation then setRotationEnabled(false) end
             return false
         end
-        if not recoveryStatus.checking then
+        if (curId == 1 or curId == nil) and not recoveryStatus.checking then
             hospitalPending = false
             shouldResumeAfterCure = false
             if farmRunIntent and not intentionalStop then
@@ -1034,8 +1038,8 @@ local function checkAndDispatchHospital()
         end
         return false
     end
-    if not recoveryClear and recoveryStatus.known ~= false then
-        -- Status belum terverifikasi: admission ditahan, bukan dianggap bebas.
+    if not recoveryClear then
+        -- UNKNOWN / respons parsial / timeout: admission ditahan (fail-closed).
         if anySick == true then
             if not hospitalPending then shouldResumeAfterCure = farmRunIntent and not intentionalStop end
             hospitalPending = true
