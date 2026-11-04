@@ -385,14 +385,14 @@ local function recoveryMessage(message)
         recoveryStatus.expectedMods = nil
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
+        recoveryStatus.complete = false
         recoveryStatus.known = recoveryStatus.active == true
         return
     end
-    if recoveryStatus.foreign then return end
+    if recoveryStatus.foreign or not recoveryStatus.header then return end
     local count = text:match("^(%d+)%s+mods? active:?%s*$") or text:match("^mods? active:?%s*(%d+)%s*$")
     if text == "no mods active" or text == "no mods active:" then count = "0" end
     if count then
-        recoveryStatus.header = true
         recoveryStatus.expectedMods = tonumber(count)
         recoveryStatus.receivedMods = 0
         recoveryStatus.seenMods = {}
@@ -470,8 +470,8 @@ local function checkRecoveryStatus()
         -- Bounded event pump; never install a second infinite loop/thread.
         local ok = pcall(listenEvents, 1)
         if not ok then recoveryStatus.known = false; recoveryStatus.checking = false end
-        if recoveryStatus.complete and recoveryStatus.checking then
-            -- Daftar mod lengkap diterima: verifikasi selesai tanpa menunggu deadline.
+        if recoveryStatus.complete and recoveryStatus.checking and recoveryStatus.header and not recoveryStatus.foreign then
+            -- Daftar mod lengkap dari bot sendiri: verifikasi selesai tanpa menunggu deadline.
             recoveryStatus.checking = false
             recoveryStatus.known = true
         end
